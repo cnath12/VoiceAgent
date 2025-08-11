@@ -128,7 +128,7 @@ class DemographicsHandler:
         """Handle phone and email collection."""
         
         if not state.patient_info.phone_number:
-            # Permissive phone acceptance: extract digits and format
+            # Permissive phone acceptance: require at least 7 digits to accept
             import re
             digits = re.sub(r"\D", "", user_input)
             if len(digits) >= 10:
@@ -136,24 +136,30 @@ class DemographicsHandler:
             elif len(digits) >= 7:
                 formatted = digits
             else:
-                # fallback to validator
-                valid, formatted_try = InputValidator.validate_phone_number(user_input)
-                formatted = formatted_try if valid and formatted_try else user_input.strip()
+                return "I didn't catch a phone number. Please say the digits clearly, for example '765 771 0488'. What's the best phone number to reach you at?"
+
             state.patient_info.phone_number = formatted
             await state_manager.update_state(
                 self.call_sid,
                 phone_number=state.patient_info.phone_number
             )
+
+            # In non-production, do not ask for email; use test email and proceed immediately
+            from src.config.settings import get_settings
+            settings = get_settings()
+            if settings.app_env.lower() in {"development", "test", "testing", "staging"}:
+                state.patient_info.email = settings.test_notification_email
+                await state_manager.update_state(self.call_sid, email=state.patient_info.email)
+                await state_manager.transition_phase(self.call_sid, ConversationPhase.PROVIDER_SELECTION)
+                return "Thank you! Now let me find available doctors for you based on your needs."
+
+            # In production, ask for email next
             return "Perfect! And may I have your email address for appointment confirmations?"
         
-        # Skip asking for email in non-production: use test email as patient email for confirmations
+        # Handle email (production only; non-prod already advanced above)
         from src.config.settings import get_settings
         settings = get_settings()
-        if settings.app_env.lower() in {"development", "test", "testing", "staging"}:
-            state.patient_info.email = settings.test_notification_email
-            await state_manager.update_state(self.call_sid, email=state.patient_info.email)
-        else:
-            # In production, collect patient's email if provided; otherwise proceed
+        if settings.app_env.lower() not in {"development", "test", "testing", "staging"}:
             valid_email, cleaned = InputValidator.validate_email(user_input)
             if valid_email and cleaned:
                 state.patient_info.email = cleaned

@@ -20,7 +20,7 @@ PHASE_PROMPTS = {
     
     "emergency_check": "",
     
-    "insurance": "To get started, could you please tell me your insurance provider name and your member ID number?",
+    "insurance": "To get started, what insurance provider do you have?",
     
     "chief_complaint": "What's the main reason you'd like to see a doctor today?",
     

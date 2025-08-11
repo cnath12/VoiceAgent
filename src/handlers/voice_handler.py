@@ -178,6 +178,14 @@ class VoiceHandler(FrameProcessor):
             # Avoid duplicating the insurance question: greeting already includes it
             if getattr(self, "_sent_greeting", False):
                 self._sent_greeting = False
+            # If we just said the final goodbye in COMPLETED phase, end the call
+            try:
+                state = await state_manager.get_state(self.call_sid)
+                if state and state.phase == ConversationPhase.COMPLETED:
+                    print(f"📞 Ending call for {self.call_sid} after goodbye")
+                    await self.push_frame(EndFrame(), FrameDirection.DOWNSTREAM)
+            except Exception as _e:
+                logger.warning(f"Failed to end call after goodbye: {_e}")
             await self.push_frame(frame, direction)
 
         elif isinstance(frame, UserStartedSpeakingFrame):
@@ -378,6 +386,17 @@ class VoiceHandler(FrameProcessor):
             print(f"🎯 ROUTING: Phase={phase}, Handler={handler_name}, Input='{user_input[:50]}...'")
             logger.info(f"Routing to {handler_name} for phase {phase}: '{user_input[:50]}...'")
             response = await handler.process_input(user_input, state)
+            # If the handler advanced the phase to PROVIDER_SELECTION without emitting options,
+            # proactively fetch and present provider/slot options to avoid a pause.
+            try:
+                new_state = await state_manager.get_state(self.call_sid)
+                if new_state and new_state.phase == ConversationPhase.PROVIDER_SELECTION:
+                    if not response or response.startswith("Thank you! Now let me find available doctors"):
+                        sched_handler = self.phase_handlers.get(ConversationPhase.PROVIDER_SELECTION)
+                        if sched_handler:
+                            response = await sched_handler.process_input("", new_state)
+            except Exception as _e:
+                logger.debug(f"Auto-advance to provider options failed: {_e}")
             print(f"🤖 HANDLER RESPONSE: {handler_name} -> '{response[:100]}...'")
             return response
         

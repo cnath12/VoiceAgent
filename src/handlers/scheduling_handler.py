@@ -50,6 +50,13 @@ class SchedulingHandler:
             for i, provider in enumerate(self._available_providers[:3], 1):
                 options.append(f"{i}. Dr. {provider['name']} - {provider['specialty']}")
             
+            # Also prefetch slots for the first provider to ensure a smooth next turn
+            try:
+                first_provider_id = self._available_providers[0]['id']
+                self._available_slots = await self.provider_service.get_available_slots(first_provider_id)
+            except Exception:
+                self._available_slots = []
+
             return f"Based on your needs, I have these doctors available: {', '.join(options)}. Which would you prefer? You can say the number or the doctor's name."
         
         # Process selection

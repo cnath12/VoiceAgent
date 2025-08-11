@@ -73,7 +73,7 @@ class InsuranceHandler:
             
             self._collection_step = "member_id"
             self._retry_count = 0  # Reset for next step
-            return f"Thank you. I have {payer_found} as your insurance provider. Now, could you please provide your member ID number?"
+            return f"Thank you. Now, could you please provide your member ID number?"
         
         # Common insurance providers - expanded list
         common_payers = {
@@ -155,7 +155,8 @@ class InsuranceHandler:
         
         self._collection_step = "member_id"
         self._retry_count = 0  # Reset for next step
-        return f"Thank you. I have {payer_found} as your insurance provider. Now, could you please provide your member ID number?"
+        # Immediately ask next question; keep concise
+        return f"Thank you. Now, could you please provide your member ID number?"
     
     async def _handle_member_id(self, user_input: str, state: ConversationState) -> str:
         """Extract and validate member ID - MORE LENIENT VERSION."""
@@ -186,7 +187,7 @@ class InsuranceHandler:
         # Check if they're just repeating the insurance provider name
         if state.patient_info.insurance and state.patient_info.insurance.payer_name:
             if state.patient_info.insurance.payer_name.lower() in user_input.lower():
-                return "I already have your insurance provider. I need your member ID number - the unique number on your insurance card. Could you please provide that?"
+                return "I already have your insurance provider. I need your member ID number from your insurance card."
         
         # More lenient validation
         valid, cleaned = InputValidator.validate_insurance_member_id(user_input)
@@ -200,14 +201,14 @@ class InsuranceHandler:
                 temp = temp.replace(word, " ")
             
             # Find alphanumeric sequences
-            matches = re.findall(r'\b[A-Z0-9]{4,}\b', temp)
+            matches = re.findall(r'\b[A-Z0-9]{3,}\b', temp)
             if matches:
                 cleaned = matches[0]  # Take the first match
                 valid = True
                 print(f"✅ Extracted member ID from input: {cleaned}")
         
         if not valid or not cleaned:
-            return "I need your member ID number from your insurance card. It's usually a combination of letters and numbers. Could you please say it slowly?"
+            return "I need your member ID number from your insurance card. It's usually a combination of letters and numbers."
         
         # Store member ID
         state.patient_info.insurance.member_id = cleaned

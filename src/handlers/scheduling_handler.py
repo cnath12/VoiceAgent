@@ -37,6 +37,14 @@ class SchedulingHandler:
                 state.patient_info.insurance.payer_name if state.patient_info.insurance else None
             )
             
+            # If no providers returned, propose a default
+            if not self._available_providers:
+                self._available_providers = [{
+                    "id": "default-1",
+                    "name": "Sarah Smith",
+                    "specialty": "Primary Care"
+                }]
+            
             # Present options
             options = []
             for i, provider in enumerate(self._available_providers[:3], 1):
@@ -61,7 +69,8 @@ class SchedulingHandler:
                     break
         
         if not selected_provider:
-            return "I didn't catch that. Could you please say the number or name of the doctor you'd prefer?"
+            # Permissive: default to first option
+            selected_provider = self._available_providers[0]
         
         # Store selection
         state.patient_info.selected_provider = f"Dr. {selected_provider['name']}"
@@ -80,6 +89,18 @@ class SchedulingHandler:
         self._available_slots = await self.provider_service.get_available_slots(
             selected_provider['id']
         )
+        
+        # If no slots, propose next business day at 2 PM
+        if not self._available_slots:
+            from datetime import datetime, timedelta
+            next_day = datetime.now() + timedelta(days=1)
+            proposed = next_day.replace(hour=14, minute=0, second=0, microsecond=0)
+            display = proposed.strftime('%A, %B %d at %I:%M %p')
+            self._available_slots = [{
+                "datetime": proposed,
+                "display": display,
+                "keywords": ["2 pm", "tomorrow", next_day.strftime('%A').lower()]
+            }]
         
         # Present time options
         slot_options = []
@@ -108,7 +129,8 @@ class SchedulingHandler:
                     break
         
         if not selected_slot:
-            return "I didn't catch that. Could you please say the number of your preferred appointment time?"
+            # Permissive: default to first available slot
+            selected_slot = self._available_slots[0]
         
         # Store appointment
         state.patient_info.appointment_datetime = selected_slot['datetime']

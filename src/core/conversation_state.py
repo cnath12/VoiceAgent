@@ -62,7 +62,7 @@ class ConversationStateManager:
     def get_next_phase(self, current_phase: ConversationPhase) -> ConversationPhase:
         """Determine next phase in conversation flow."""
         transitions = {
-            ConversationPhase.GREETING: ConversationPhase.EMERGENCY_CHECK,
+            ConversationPhase.GREETING: ConversationPhase.INSURANCE,
             ConversationPhase.EMERGENCY_CHECK: ConversationPhase.INSURANCE,
             ConversationPhase.INSURANCE: ConversationPhase.CHIEF_COMPLAINT,
             ConversationPhase.CHIEF_COMPLAINT: ConversationPhase.DEMOGRAPHICS,

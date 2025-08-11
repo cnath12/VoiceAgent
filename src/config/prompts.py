@@ -16,11 +16,11 @@ Patient information collected so far: {patient_info}
 """
 
 PHASE_PROMPTS = {
-    "greeting": "Hello! Thank you for calling. I'm here to help you schedule an appointment. Before we begin, I need to check - are you experiencing a medical emergency?",
+    "greeting": "",
     
-    "emergency_check": "If this is a medical emergency, please hang up and dial 911. Otherwise, let's get started with scheduling your appointment.",
+    "emergency_check": "",
     
-    "insurance": "I'll need to collect your insurance information. Could you please tell me your insurance provider name and your member ID number?",
+    "insurance": "To get started, could you please tell me your insurance provider name and your member ID number?",
     
     "chief_complaint": "What's the main reason you'd like to see a doctor today?",
     

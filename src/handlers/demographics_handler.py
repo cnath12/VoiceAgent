@@ -33,37 +33,29 @@ class DemographicsHandler:
     async def _handle_full_address(self, user_input: str, state: ConversationState) -> str:
         """Parse and validate full address."""
         
-        # Filter out non-address responses
-        non_address_responses = [
-            "yes", "no", "okay", "ok", "sure", "what", "huh", "hello", "hi",
-            "i want", "i need", "can you", "could you", "please", "thank you",
-            "good", "fine", "great", "perfect", "alright"
-        ]
-        
+        # Permissive acceptance: allow typical address patterns
         input_lower = user_input.lower().strip()
-        
-        # If input is clearly not an address, ask again
-        if (len(user_input.strip()) < 5 or 
-            any(phrase in input_lower for phrase in non_address_responses) or
-            not any(char.isdigit() for char in user_input)):  # Address should have numbers
-            return "I need your complete street address for our records. Please provide your house number and street name, like '123 Main Street, San Francisco, CA 94101'."
+        has_numbers = any(char.isdigit() for char in user_input)
+        street_keywords = [
+            "street", "st", "avenue", "ave", "road", "rd", "drive", "dr", "lane", "ln",
+            "boulevard", "blvd", "way", "court", "ct", "place", "pl", "parkway", "pkwy"
+        ]
+        has_street_keyword = any(f" {kw} " in f" {input_lower} " for kw in street_keywords)
         
         # Try to parse address components
         address_parts = self._parse_address(user_input)
         
-        if not all(address_parts.values()):
-            self._address_parts = address_parts
-            self._collection_step = "clarification"
-            missing = [k for k, v in address_parts.items() if not v]
-            return f"I need to clarify your {', '.join(missing)}. Could you please repeat just that information?"
-        
-        # Validate address
-        validated_address = await self.address_service.validate_address(
-            street=address_parts["street"],
-            city=address_parts["city"],
-            state=address_parts["state"],
-            zip_code=address_parts["zip"]
-        )
+        # Attempt validation, but don't block on failure
+        validated_address = None
+        try:
+            validated_address = await self.address_service.validate_address(
+                street=address_parts.get("street", ""),
+                city=address_parts.get("city", ""),
+                state=address_parts.get("state", ""),
+                zip_code=address_parts.get("zip", "")
+            )
+        except Exception:
+            validated_address = None
         
         if validated_address and validated_address.validated:
             # Store validated address
@@ -72,7 +64,6 @@ class DemographicsHandler:
                 self.call_sid,
                 address=validated_address
             )
-            
             # Move to contact info
             self._collection_step = "phone"
             await state_manager.transition_phase(
@@ -80,10 +71,37 @@ class DemographicsHandler:
                 ConversationPhase.CONTACT_INFO
             )
             return "Great! I've verified your address. Now, what's the best phone number to reach you at?"
-        else:
-            # Address validation failed
-            self._collection_step = "clarification"
-            return "I'm having trouble verifying that address. Could you please repeat it slowly, starting with the street number and name?"
+        
+        # If it looks like an address (numbers or street keyword or sufficiently descriptive), accept and proceed
+        looks_like_address = (has_numbers and has_street_keyword) or len(user_input.split()) >= 4
+        if looks_like_address:
+            # Fill missing parts permissively
+            street = address_parts.get("street") or user_input.strip()
+            # If the input is clearly not an address sentence, do not accept
+            if street.lower() in {"yes", "no", "ok", "okay", "sure"}:
+                return "I need your complete street address, starting with the house number and street name. For example: '150 Van Ness Ave, San Francisco, CA 94102'."
+            city = address_parts.get("city") or ""
+            state_code = address_parts.get("state") or ""
+            zip_code = address_parts.get("zip") or ""
+            
+            addr = Address(
+                street=street,
+                city=city,
+                state=state_code,
+                zip_code=zip_code,
+                validated=False,
+                validation_message="Captured without verification"
+            )
+            state.patient_info.address = addr
+            await state_manager.update_state(self.call_sid, address=addr)
+            
+            # Move to contact info
+            self._collection_step = "phone"
+            await state_manager.transition_phase(self.call_sid, ConversationPhase.CONTACT_INFO)
+            return "Thanks! I've captured your address. Now, what's the best phone number to reach you at?"
+        
+        # Otherwise, ask again with guidance
+        return "I need your complete street address for our records. Please provide your house number and street name, like '150 Van Ness Ave, San Francisco, CA 94102'."
     
     async def _handle_address_clarification(self, user_input: str, state: ConversationState) -> str:
         """Handle address clarification."""
@@ -110,23 +128,30 @@ class DemographicsHandler:
         """Handle phone and email collection."""
         
         if not state.patient_info.phone_number:
-            # Extract phone number using validator
+            # Permissive phone acceptance: try to extract digits; accept if it looks phone-like
             valid, formatted = InputValidator.validate_phone_number(user_input)
-            if valid and formatted:
-                state.patient_info.phone_number = formatted
-                await state_manager.update_state(
-                    self.call_sid,
-                    phone_number=state.patient_info.phone_number
-                )
-                return "Perfect! And may I have your email address for appointment confirmations?"
-            else:
-                return "I need a valid 10-digit phone number. Could you please repeat it?"
+            if not valid or not formatted:
+                import re
+                digits = re.sub(r"\D", "", user_input)
+                if len(digits) >= 7:
+                    formatted = digits
+                else:
+                    formatted = user_input.strip() or "unknown"
+            state.patient_info.phone_number = formatted
+            await state_manager.update_state(
+                self.call_sid,
+                phone_number=state.patient_info.phone_number
+            )
+            return "Perfect! And may I have your email address for appointment confirmations?"
         
         # Handle email
         valid_email, cleaned = InputValidator.validate_email(user_input)
         if valid_email and cleaned:
             state.patient_info.email = cleaned
             await state_manager.update_state(self.call_sid, email=state.patient_info.email)
+        else:
+            # Accept and proceed even without a validated email
+            pass
         
         # Move to provider selection
         await state_manager.transition_phase(

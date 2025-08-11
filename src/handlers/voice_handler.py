@@ -40,6 +40,7 @@ class VoiceHandler(FrameProcessor):
         
         self._current_phase_handler = None
         self._speaking = False
+        self._bot_speaking = False
         self._last_user_input_time = None
         self._silence_check_task = None
         self._initialized = False
@@ -72,6 +73,8 @@ class VoiceHandler(FrameProcessor):
             "EndFrame",
             "UserStartedSpeakingFrame",
             "UserStoppedSpeakingFrame",
+            "BotStartedSpeakingFrame",
+            "BotStoppedSpeakingFrame",
             "TTSStartedFrame",
             "TTSStoppedFrame",
         }
@@ -108,19 +111,32 @@ class VoiceHandler(FrameProcessor):
                 # DEEPGRAM TTS FIX: Send greeting immediately since DeepgramTTS doesn't send TTSStartedFrame
                 print(f"🎯 CONTINUOUS GREETING: Sending uninterrupted greeting")
                 
-                # Make greeting more TTS-friendly with natural pauses but no breaks
-                greeting = ("Hello! This is Assort Health, your AI appointment scheduler. "
-                           "I'm here to help you schedule your appointment today. "
-                           "First, are you experiencing a medical emergency?")
+                # Make greeting concise and move directly to insurance collection
+                part1 = "Hello! This is Assort Health, your AI appointment scheduler."
+                part2 = (
+                    "I'm here to help you schedule your appointment today. "
+                    "To get started, could you please tell me your insurance provider name and your member ID number?"
+                )
                 
+                greeting = f"{part1} {part2}"
                 print(f"🗣️ Sending continuous greeting (length: {len(greeting)} chars)")
                 print(f"🗣️ Greeting text: '{greeting}'")
                 logger.info(f"Sending initial greeting to {self.call_sid}")
                 
                 # Create TextFrame with explicit handling
-                greeting_frame = TextFrame(text=greeting)
-                print(f"🔥 Created greeting TextFrame: {greeting_frame}")
-                await self.push_frame(greeting_frame, FrameDirection.DOWNSTREAM)
+                # Send greeting as two back-to-back TextFrames to avoid TTS truncation after 'Hello!'
+                greeting_frame1 = TextFrame(text=part1)
+                greeting_frame2 = TextFrame(text=part2)
+                print(f"🔥 Created greeting TextFrames: {greeting_frame1} | {greeting_frame2}")
+                await self.push_frame(greeting_frame1, FrameDirection.DOWNSTREAM)
+                import asyncio as _asyncio
+                await _asyncio.sleep(0.05)
+                await self.push_frame(greeting_frame2, FrameDirection.DOWNSTREAM)
+                self._tts_warmed_up = True
+                # Detailed timing breadcrumbs
+                import time as _time
+                self._last_greeting_time = _time.time()
+                logger.debug(f"Greeting dispatched at {_time.strftime('%H:%M:%S')} for {self.call_sid}")
                 print(f"✅ Continuous greeting TextFrame sent to TTS service!")
             return
         
@@ -138,6 +154,16 @@ class VoiceHandler(FrameProcessor):
             logger.info(f"TTS stopped frame received for {self.call_sid}")
             await self.push_frame(frame, direction)
 
+        elif type(frame).__name__ == "BotStartedSpeakingFrame":
+            self._bot_speaking = True
+            logger.debug(f"BotStartedSpeakingFrame: bot_speaking=True for {self.call_sid}")
+            await self.push_frame(frame, direction)
+
+        elif type(frame).__name__ == "BotStoppedSpeakingFrame":
+            self._bot_speaking = False
+            logger.debug(f"BotStoppedSpeakingFrame: bot_speaking=False for {self.call_sid}")
+            await self.push_frame(frame, direction)
+
         elif isinstance(frame, UserStartedSpeakingFrame):
             self._speaking = True
             logger.info(f"User started speaking in {self.call_sid}")
@@ -153,11 +179,18 @@ class VoiceHandler(FrameProcessor):
             print(f"🎯 RECEIVED TRANSCRIPTION FRAME: text='{frame.text}' confidence={getattr(frame, 'confidence', 'N/A')}")
             logger.info(f"Received TranscriptionFrame: '{frame.text}' for {self.call_sid}")
             
+            # Ignore user input while the bot is speaking to prevent talk-over capture
+            if self._bot_speaking:
+                logger.info(f"Ignoring user speech while bot is speaking for {self.call_sid}: '{frame.text}'")
+                return
+
             if frame.text and frame.text.strip():
                 print(f"\n🗣️ ===== USER SAID: '{frame.text}' ===== (Final Transcription)")
                 logger.info(f"🗣️ USER TRANSCRIPTION: '{frame.text}' for {self.call_sid}")
                 logger.info(f"Processing transcription: '{frame.text}' for {self.call_sid}")
                 import asyncio as _asyncio
+                import time as _time
+                t_start = _time.time()
                 async for response_frame in self._handle_user_input(frame.text):
                     print(f"🚀 Preparing to push response frame: {type(response_frame).__name__}")
                     # Warm up TTS on the very first TextFrame by ensuring a StartFrame reached it
@@ -184,6 +217,8 @@ class VoiceHandler(FrameProcessor):
                             logger.info("Retry succeeded for TextFrame push")
                         except Exception as e2:
                             logger.error(f"Retry failed for TextFrame push: {e2}")
+                t_end = _time.time()
+                logger.debug(f"End-to-end response generation latency: {(t_end - t_start)*1000:.1f} ms for {self.call_sid}")
             else:
                 print(f"⚠️ Received empty or whitespace-only TranscriptionFrame: '{frame.text}'")
                 logger.warning(f"Empty TranscriptionFrame received for {self.call_sid}: '{frame.text}'")
@@ -235,10 +270,9 @@ class VoiceHandler(FrameProcessor):
         """Process user input and generate response."""
         logger.info(f"User input in {self.call_sid}: {text}")
         
-        # Track user input time for silence detection
+        # Track last user input timestamp (silence monitoring disabled)
         import time
         self._last_user_input_time = time.time()
-        self._start_silence_monitoring()
         
         # Get current state
         state = await state_manager.get_state(self.call_sid)
@@ -301,42 +335,21 @@ class VoiceHandler(FrameProcessor):
         
         # Handle initial phases directly
         if phase == ConversationPhase.GREETING:
+            # Skip emergency; move straight to insurance collection
             await state_manager.transition_phase(
-                self.call_sid, 
-                ConversationPhase.EMERGENCY_CHECK
+                self.call_sid,
+                ConversationPhase.INSURANCE
             )
-            # NO additional message - greeting already included emergency question
-            # Return None to avoid sending another TTS frame
+            # Greeting already asked for insurance info; avoid duplicate prompt
             return None
         
         elif phase == ConversationPhase.EMERGENCY_CHECK:
-            # Smart emergency detection - look for positive vs negative responses
-            input_lower = user_input.lower()
-            
-            # Positive emergency indicators
-            emergency_yes = any(phrase in input_lower for phrase in [
-                "yes", "experiencing emergency", "need emergency", "911", "urgent", 
-                "having emergency", "this is emergency"
-            ])
-            
-            # Negative emergency indicators  
-            emergency_no = any(phrase in input_lower for phrase in [
-                "no", "not experiencing", "no emergency", "not emergency", 
-                "not urgent", "i'm not", "not having"
-            ])
-            
-            print(f"🚨 EMERGENCY CHECK: Input='{user_input}', Yes={emergency_yes}, No={emergency_no}")
-            
-            if emergency_yes and not emergency_no:
-                return "Please hang up and dial 911 immediately for emergency assistance."
-            else:
-                # Assume no emergency and proceed to insurance
-                print(f"✅ NO EMERGENCY detected, proceeding to insurance phase")
-                await state_manager.transition_phase(
-                    self.call_sid,
-                    ConversationPhase.INSURANCE
-                )
-                return PHASE_PROMPTS["insurance"]
+            # Emergency check disabled in current flow; proceed to insurance
+            await state_manager.transition_phase(
+                self.call_sid,
+                ConversationPhase.INSURANCE
+            )
+            return PHASE_PROMPTS["insurance"]
         
         # Use specific handlers for data collection phases
         elif phase in self.phase_handlers:
@@ -388,40 +401,14 @@ class VoiceHandler(FrameProcessor):
 
     
     def _start_silence_monitoring(self):
-        """Start monitoring for user silence."""
-        # Cancel existing silence check if any
+        """Silence monitoring disabled."""
         if self._silence_check_task:
             self._silence_check_task.cancel()
-        
-        import asyncio
-        self._silence_check_task = asyncio.create_task(self._monitor_silence())
+            self._silence_check_task = None
     
     async def _monitor_silence(self):
-        """Monitor for silence and check in with user after 30 seconds."""
-        import asyncio
-        import time
-        
-        try:
-            while True:
-                await asyncio.sleep(30)  # Wait 30 seconds - much more patient
-                
-                if self._last_user_input_time:
-                    time_since_input = time.time() - self._last_user_input_time
-                    
-                    if time_since_input >= 30:
-                        logger.info(f"Silence detected for {self.call_sid}, checking in with user")
-                        
-                        # Send check-in message
-                        checkin = "Are you still there? I'm here to help you schedule your appointment."
-                        await self.push_frame(TextFrame(text=checkin), FrameDirection.DOWNSTREAM)
-                        
-                        # Reset timer
-                        self._last_user_input_time = time.time()
-                        
-        except asyncio.CancelledError:
-            logger.info(f"Silence monitoring cancelled for {self.call_sid}")
-        except Exception as e:
-            logger.error(f"Error in silence monitoring for {self.call_sid}: {e}")
+        """Silence monitoring disabled."""
+        return
     
     def _handle_repetition_escalation(self, repeated_response: str, state: ConversationState) -> Optional[str]:
         """Handle cases where the same response would be repeated multiple times."""
@@ -435,11 +422,11 @@ class VoiceHandler(FrameProcessor):
         
         # If asking for emergency info repeatedly, move forward
         elif "medical emergency" in repeated_response.lower():
-            logger.info(f"Emergency question repeated, assuming no emergency and moving forward for {self.call_sid}")
-            # Directly transition to insurance
-            import asyncio
-            asyncio.create_task(state_manager.transition_phase(self.call_sid, ConversationPhase.INSURANCE))
-            return "I'll assume you're not experiencing an emergency. Let me collect your insurance information to help schedule your appointment. What's your insurance provider name?"
+            # Emergency flow removed; pivot to insurance guidance
+            return (
+                "To proceed, I need your insurance details. "
+                "Please tell me your insurance provider name and your member ID number."
+            )
         
         # If asking for other info repeatedly, provide help
         else:

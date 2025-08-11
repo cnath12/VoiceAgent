@@ -36,8 +36,12 @@ class SymptomHandler:
     async def _handle_initial_complaint(self, user_input: str, state: ConversationState) -> str:
         """Process the initial complaint."""
         
-        # Store the complaint
-        state.patient_info.chief_complaint = user_input.strip()
+        # Store the complaint (permissive: accept any 2+ words; otherwise accept as-is)
+        cleaned = user_input.strip()
+        if len(cleaned.split()) >= 2:
+            state.patient_info.chief_complaint = cleaned
+        else:
+            state.patient_info.chief_complaint = cleaned
         
         # Update state
         await state_manager.update_state(
@@ -45,10 +49,11 @@ class SymptomHandler:
             chief_complaint=state.patient_info.chief_complaint
         )
         
-        # Check for urgent keywords
+        # Keep gentle guidance but do not block
         urgent_keywords = ["emergency", "chest pain", "can't breathe", "bleeding", "unconscious"]
         if any(keyword in user_input.lower() for keyword in urgent_keywords):
-            return "This sounds like it may need immediate attention. If this is an emergency, please hang up and dial 911. Otherwise, how long have you been experiencing these symptoms?"
+            self._asked_for_duration = True
+            return "If this is an emergency, please hang up and dial 911. Otherwise, how long have you been experiencing these symptoms?"
         
         self._asked_for_duration = True
         return "I understand. How long have you been experiencing these symptoms? And on a scale of 1 to 10, how would you rate your discomfort?"

@@ -192,7 +192,11 @@ async def create_pipeline(call_sid: str, transport: FastAPIWebsocketTransport) -
                 if debug_tts_process_frame._audio_count == 1:
                     print(f"🎵 TTS generating first audio frame - speech synthesis working!")
                 
+            import time as _time
+            t0 = _time.time()
             result = await original_process_frame(frame, direction)
+            t1 = _time.time()
+            print(f"⏱️ TTS process_frame duration for {frame_type}: {(t1 - t0)*1000:.1f} ms")
             
             if frame_type == "TextFrame":
                 print(f"📢 TTS Processed TextFrame - should generate audio now")
@@ -206,7 +210,7 @@ async def create_pipeline(call_sid: str, transport: FastAPIWebsocketTransport) -
         # Give TTS service time to fully initialize internal queues
         print(f"⏳ Allowing TTS service to fully initialize...")
         import asyncio
-        await asyncio.sleep(3.0)  # Ensure service is completely ready
+        await asyncio.sleep(0.5)  # Reduce startup delay for faster greeting
         
         print(f"✅ DeepgramTTSService created and initialized!")
         print(f"🎯 TTS Configuration: aura-asteria-en voice, 8kHz linear16, container=none (transport will convert)")
@@ -436,13 +440,18 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
         pipeline_task = None  # Will be set after pipeline creation
         async def forward_transcription_to_pipeline(text: str):
             """Forward direct Deepgram transcription to VoiceHandler pipeline"""
-            if pipeline_task:
+            nonlocal pipeline_task
+            try:
+                if pipeline_task is None:
+                    print(f"⚠️ No pipeline_task available to forward transcription: '{text}'")
+                    return
                 from pipecat.frames.frames import TranscriptionFrame
                 print(f"🚀 Forwarding transcription to pipeline: '{text}'")
                 transcription_frame = TranscriptionFrame(text=text, user_id=call_sid, timestamp=time.time())
                 await pipeline_task.queue_frame(transcription_frame)
-            else:
-                print(f"⚠️ No pipeline_task available to forward transcription")
+                print(f"✅ Queued TranscriptionFrame to pipeline")
+            except Exception as e:
+                print(f"❌ Failed forwarding transcription to pipeline: {e}")
 
         print(f"🔧 Creating FastAPIWebsocketTransport for {call_sid}...")
         print(f"🔍 Transport params - audio_in: True, audio_out: True, vad: {vad_analyzer is not None}")
@@ -503,6 +512,7 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
         from pipecat.frames.frames import StartFrame
         print(f"🚀 Sending StartFrame to initialize pipeline...")
         await task.queue_frame(StartFrame())
+        # Remove extra warm-up frames to reduce initial latency
         print(f"✅ StartFrame queued!")
         
         # 🔧 HYBRID FIX: Start direct Deepgram connection (from fixed_tts_agent.py)
@@ -528,7 +538,7 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
                     if current_time - last_audio_time > 2:
                         print(f"💓 Sending Deepgram KeepAlive... (last audio: {current_time - last_audio_time:.1f}s ago)")
                         await direct_dg_connection.keep_alive()
-                    await asyncio.sleep(2)  # Check every 2 seconds
+                    await asyncio.sleep(0.2)  # Check every 2 seconds
                 except Exception as e:
                     print(f"❌ KeepAlive error: {e}")
                     break

@@ -1,0 +1,15 @@
+# Core Framework
+pipecat-ai[websocket,deepgram,cartesia,silero]
+
+# API Clients
+openai
+twilio
+
+# Web Framework
+fastapi
+uvicorn
+
+# Utilities
+python-dotenv
+pydantic[email]
+python-multipart

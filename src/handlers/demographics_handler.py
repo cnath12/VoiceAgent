@@ -144,32 +144,17 @@ class DemographicsHandler:
                 phone_number=state.patient_info.phone_number
             )
 
-            # In non-production, do not ask for email; use test email and proceed immediately
+            # In all environments, skip asking for email and proceed immediately
             from src.config.settings import get_settings
             settings = get_settings()
             if settings.app_env.lower() in {"development", "test", "testing", "staging"}:
                 state.patient_info.email = settings.test_notification_email
                 await state_manager.update_state(self.call_sid, email=state.patient_info.email)
-                await state_manager.transition_phase(self.call_sid, ConversationPhase.PROVIDER_SELECTION)
-                return "Thank you! Now let me find available doctors for you based on your needs."
-
-            # In production, ask for email next
-            return "Perfect! And may I have your email address for appointment confirmations?"
+            await state_manager.transition_phase(self.call_sid, ConversationPhase.PROVIDER_SELECTION)
+            return "Thank you! Now let me find available doctors for you based on your needs."
         
-        # Handle email (production only; non-prod already advanced above)
-        from src.config.settings import get_settings
-        settings = get_settings()
-        if settings.app_env.lower() not in {"development", "test", "testing", "staging"}:
-            valid_email, cleaned = InputValidator.validate_email(user_input)
-            if valid_email and cleaned:
-                state.patient_info.email = cleaned
-                await state_manager.update_state(self.call_sid, email=state.patient_info.email)
-        
-        # Move to provider selection
-        await state_manager.transition_phase(
-            self.call_sid,
-            ConversationPhase.PROVIDER_SELECTION
-        )
+        # Phone already present: skip email and proceed directly
+        await state_manager.transition_phase(self.call_sid, ConversationPhase.PROVIDER_SELECTION)
         return "Thank you! Now let me find available doctors for you based on your needs."
     
     def _parse_address(self, address_text: str) -> Dict[str, str]:

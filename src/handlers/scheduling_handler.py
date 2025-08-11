@@ -61,13 +61,26 @@ class SchedulingHandler:
         
         # Process selection
         selected_provider = None
-        
-        # Check if they said a number
-        if user_input.strip().isdigit():
-            idx = int(user_input.strip()) - 1
+
+        # Check if they said a number (support number words via LLM classifier as fallback)
+        cleaned = user_input.strip()
+        if cleaned.isdigit():
+            idx = int(cleaned) - 1
             if 0 <= idx < len(self._available_providers):
                 selected_provider = self._available_providers[idx]
-        
+        if not selected_provider and cleaned:
+            try:
+                from src.services.llm_service import LLMService
+                labels = [str(i+1) for i in range(len(self._available_providers[:3]))]
+                llm = LLMService()
+                result = await llm.classify_choice(cleaned, labels)
+                if result and result.get("label") in labels:
+                    idx = int(result["label"]) - 1
+                    if 0 <= idx < len(self._available_providers):
+                        selected_provider = self._available_providers[idx]
+            except Exception:
+                pass
+
         # Check if they said a name
         if not selected_provider:
             for provider in self._available_providers:
@@ -121,11 +134,24 @@ class SchedulingHandler:
         
         selected_slot = None
         
-        # Check if they said a number
-        if user_input.strip().isdigit():
-            idx = int(user_input.strip()) - 1
+        # Check if they said a number (support number words via LLM classifier as fallback)
+        cleaned = user_input.strip()
+        if cleaned.isdigit():
+            idx = int(cleaned) - 1
             if 0 <= idx < len(self._available_slots):
                 selected_slot = self._available_slots[idx]
+        if not selected_slot and cleaned:
+            try:
+                from src.services.llm_service import LLMService
+                labels = [str(i+1) for i in range(len(self._available_slots[:3]))]
+                llm = LLMService()
+                result = await llm.classify_choice(cleaned, labels)
+                if result and result.get("label") in labels:
+                    idx = int(result["label"]) - 1
+                    if 0 <= idx < len(self._available_slots):
+                        selected_slot = self._available_slots[idx]
+            except Exception:
+                pass
         
         # Check for day/time keywords
         if not selected_slot:

@@ -107,3 +107,77 @@ class LLMService:
         except Exception as e:
             logger.error(f"Information extraction error: {e}")
             return None
+
+    async def classify_label(self, user_input: str, labels: List[str]) -> Optional[Dict]:
+        """Classify user_input into one of the provided labels.
+        Returns a dict: {"payer": str, "confidence": float} or None on error.
+        """
+        try:
+            if not labels:
+                return None
+            system = (
+                "You are a strict classifier. Given a user input, choose the single best matching label "
+                "from the provided list. If none is appropriate, return 'unknown' with low confidence. "
+                "Return JSON only with keys: payer (string) and confidence (0.0-1.0)."
+            )
+            content = (
+                "Labels:\n" + "\n".join(f"- {l}" for l in labels) + "\n\n"
+                f"User input: {user_input}"
+            )
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": content},
+                ],
+                temperature=0.0,
+                max_tokens=60,
+                response_format={"type": "json_object"},
+            )
+            data = json.loads(response.choices[0].message.content)
+            payer = str(data.get("payer", "unknown"))
+            try:
+                confidence = float(data.get("confidence", 0.0))
+            except Exception:
+                confidence = 0.0
+            return {"payer": payer, "confidence": confidence}
+        except Exception as e:
+            logger.error(f"LLM classify error: {e}")
+            return None
+
+    async def classify_choice(self, user_input: str, labels: List[str]) -> Optional[Dict]:
+        """Generic classifier to pick one label from a provided list.
+        Returns {"label": str, "confidence": float} or None on error.
+        """
+        try:
+            if not labels:
+                return None
+            system = (
+                "You are a strict classifier. Choose the single best matching label from the list. "
+                "If none fit, return 'unknown' with confidence 0.0. Respond ONLY in JSON with keys: "
+                "label (string) and confidence (0.0-1.0)."
+            )
+            content = (
+                "Labels:\n" + "\n".join(f"- {l}" for l in labels) + "\n\n"
+                f"User input: {user_input}"
+            )
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": content},
+                ],
+                temperature=0.0,
+                max_tokens=60,
+                response_format={"type": "json_object"},
+            )
+            data = json.loads(response.choices[0].message.content)
+            label = str(data.get("label", "unknown"))
+            try:
+                confidence = float(data.get("confidence", 0.0))
+            except Exception:
+                confidence = 0.0
+            return {"label": label, "confidence": confidence}
+        except Exception as e:
+            logger.error(f"LLM classify_choice error: {e}")
+            return None

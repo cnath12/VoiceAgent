@@ -135,6 +135,19 @@ class InsuranceHandler:
                     logger.warning(f"Unrecognized insurance payer: {payer_found}")
         
         if not payer_found:
+            # Use LLM classifier against canonical labels
+            try:
+                from src.services.llm_service import LLMService
+                llm = LLMService()
+                canonical_labels = list({v for v in common_payers.values()})
+                result = await llm.classify_label(user_input, canonical_labels)
+                if result and result.get("payer") and result.get("payer") != "unknown":
+                    payer_found = result["payer"]
+                    print(f"🤖 LLM mapped insurance to: {payer_found} (conf={result.get('confidence', 0.0)})")
+            except Exception as e:
+                logger.warning(f"LLM classify failed: {e}")
+
+        if not payer_found:
             # Don't be too picky - guide them
             return "I need your insurance provider name. For example, you might say 'Kaiser' or 'Blue Cross' or the name on your insurance card. What insurance do you have?"
         

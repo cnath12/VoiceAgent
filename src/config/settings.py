@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     
     # Notification Recipients (comma-separated in env)
     notification_emails_str: str = "jeff@assorthealth.com,connor@assorthealth.com,cole@assorthealth.com,jciminelli@assorthealth.com,akumar@assorthealth.com,riley@assorthealth.com"
+    # Test environment recipient override
+    test_notification_email: str = "chirag12084@gmail.com"
     @property
     def notification_emails(self) -> list[str]:
         """Parse comma-separated email string into list."""

@@ -98,7 +98,7 @@ class DemographicsHandler:
             # Move to contact info
             self._collection_step = "phone"
             await state_manager.transition_phase(self.call_sid, ConversationPhase.CONTACT_INFO)
-            return "Thanks! I've captured your address. Now, what's the best phone number to reach you at?"
+            return "Thanks! What's the best phone number to reach you at?"
         
         # Otherwise, ask again with guidance
         return "I need your complete street address for our records. Please provide your house number and street name, like '150 Van Ness Ave, San Francisco, CA 94102'."
@@ -128,15 +128,17 @@ class DemographicsHandler:
         """Handle phone and email collection."""
         
         if not state.patient_info.phone_number:
-            # Permissive phone acceptance: try to extract digits; accept if it looks phone-like
-            valid, formatted = InputValidator.validate_phone_number(user_input)
-            if not valid or not formatted:
-                import re
-                digits = re.sub(r"\D", "", user_input)
-                if len(digits) >= 7:
-                    formatted = digits
-                else:
-                    formatted = user_input.strip() or "unknown"
+            # Permissive phone acceptance: extract digits and format
+            import re
+            digits = re.sub(r"\D", "", user_input)
+            if len(digits) >= 10:
+                formatted = f"({digits[0:3]}) {digits[3:6]}-{digits[6:10]}"
+            elif len(digits) >= 7:
+                formatted = digits
+            else:
+                # fallback to validator
+                valid, formatted_try = InputValidator.validate_phone_number(user_input)
+                formatted = formatted_try if valid and formatted_try else user_input.strip()
             state.patient_info.phone_number = formatted
             await state_manager.update_state(
                 self.call_sid,
@@ -144,14 +146,18 @@ class DemographicsHandler:
             )
             return "Perfect! And may I have your email address for appointment confirmations?"
         
-        # Handle email
-        valid_email, cleaned = InputValidator.validate_email(user_input)
-        if valid_email and cleaned:
-            state.patient_info.email = cleaned
+        # Skip asking for email in non-production: use test email as patient email for confirmations
+        from src.config.settings import get_settings
+        settings = get_settings()
+        if settings.app_env.lower() in {"development", "test", "testing", "staging"}:
+            state.patient_info.email = settings.test_notification_email
             await state_manager.update_state(self.call_sid, email=state.patient_info.email)
         else:
-            # Accept and proceed even without a validated email
-            pass
+            # In production, collect patient's email if provided; otherwise proceed
+            valid_email, cleaned = InputValidator.validate_email(user_input)
+            if valid_email and cleaned:
+                state.patient_info.email = cleaned
+                await state_manager.update_state(self.call_sid, email=state.patient_info.email)
         
         # Move to provider selection
         await state_manager.transition_phase(

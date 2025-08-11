@@ -21,7 +21,11 @@ class EmailService:
         self.smtp_port = settings.smtp_port
         self.smtp_email = settings.smtp_email
         self.smtp_password = settings.smtp_password
-        self.notification_emails = settings.notification_emails
+        # Determine staff recipients: use test override in non-production app envs
+        if settings.app_env.lower() in {"development", "test", "testing", "staging"}:
+            self.notification_emails = [settings.test_notification_email]
+        else:
+            self.notification_emails = settings.notification_emails
     
     async def send_appointment_confirmation(self, state: ConversationState) -> bool:
         """Send appointment confirmation to patient and notification to staff."""

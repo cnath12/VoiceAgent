@@ -30,12 +30,20 @@ class VoiceHandler(FrameProcessor):
         self.call_sid = call_sid
         
         # Initialize phase handlers
+        insurance_handler = InsuranceHandler(call_sid)
+        symptom_handler = SymptomHandler(call_sid)
+        demographics_handler = DemographicsHandler(call_sid)
+        scheduling_handler = SchedulingHandler(call_sid)
+
         self.phase_handlers = {
-            ConversationPhase.INSURANCE: InsuranceHandler(call_sid),
-            ConversationPhase.CHIEF_COMPLAINT: SymptomHandler(call_sid),
-            ConversationPhase.DEMOGRAPHICS: DemographicsHandler(call_sid),
-            ConversationPhase.PROVIDER_SELECTION: SchedulingHandler(call_sid),
-            ConversationPhase.APPOINTMENT_SCHEDULING: SchedulingHandler(call_sid),
+            ConversationPhase.INSURANCE: insurance_handler,
+            ConversationPhase.CHIEF_COMPLAINT: symptom_handler,
+            # Use the same demographics handler instance across DEMOGRAPHICS and CONTACT_INFO to retain step state
+            ConversationPhase.DEMOGRAPHICS: demographics_handler,
+            ConversationPhase.CONTACT_INFO: demographics_handler,
+            # Use the same scheduling handler instance across provider selection and appointment scheduling to retain available slots
+            ConversationPhase.PROVIDER_SELECTION: scheduling_handler,
+            ConversationPhase.APPOINTMENT_SCHEDULING: scheduling_handler,
         }
         
         self._current_phase_handler = None
@@ -109,17 +117,18 @@ class VoiceHandler(FrameProcessor):
                 logger.info(f"VoiceHandler initialized for {self.call_sid}")
                 
                 # DEEPGRAM TTS FIX: Send greeting immediately since DeepgramTTS doesn't send TTSStartedFrame
-                print(f"🎯 CONTINUOUS GREETING: Sending uninterrupted greeting")
+                print(f"🎯 CONTINUOUS GREETING: Sending greeting + immediate insurance prompt")
                 
-                # Make greeting concise and move directly to insurance collection
+                # Greeting only (no question); ask insurance immediately after
                 part1 = "Hello! This is Assort Health, your AI appointment scheduler."
-                part2 = (
-                    "I'm here to help you schedule your appointment today. "
+                part2 = "I'm here to help you schedule your appointment today."
+                insurance_prompt = PHASE_PROMPTS.get(
+                    "insurance",
                     "To get started, could you please tell me your insurance provider name and your member ID number?"
                 )
                 
                 greeting = f"{part1} {part2}"
-                print(f"🗣️ Sending continuous greeting (length: {len(greeting)} chars)")
+                print(f"🗣️ Sending greeting (length: {len(greeting)} chars)")
                 print(f"🗣️ Greeting text: '{greeting}'")
                 logger.info(f"Sending initial greeting to {self.call_sid}")
                 
@@ -129,15 +138,19 @@ class VoiceHandler(FrameProcessor):
                 greeting_frame2 = TextFrame(text=part2)
                 print(f"🔥 Created greeting TextFrames: {greeting_frame1} | {greeting_frame2}")
                 await self.push_frame(greeting_frame1, FrameDirection.DOWNSTREAM)
-                import asyncio as _asyncio
-                await _asyncio.sleep(0.05)
                 await self.push_frame(greeting_frame2, FrameDirection.DOWNSTREAM)
+                # Immediately ask for insurance as a separate statement
+                await self.push_frame(TextFrame(text=insurance_prompt), FrameDirection.DOWNSTREAM)
+                # Ensure phase is INSURANCE right away
+                await state_manager.transition_phase(self.call_sid, ConversationPhase.INSURANCE)
                 self._tts_warmed_up = True
                 # Detailed timing breadcrumbs
                 import time as _time
                 self._last_greeting_time = _time.time()
                 logger.debug(f"Greeting dispatched at {_time.strftime('%H:%M:%S')} for {self.call_sid}")
                 print(f"✅ Continuous greeting TextFrame sent to TTS service!")
+                # Mark that greeting just finished dispatch
+                self._sent_greeting = True
             return
         
         # Handle speech events
@@ -162,6 +175,9 @@ class VoiceHandler(FrameProcessor):
         elif type(frame).__name__ == "BotStoppedSpeakingFrame":
             self._bot_speaking = False
             logger.debug(f"BotStoppedSpeakingFrame: bot_speaking=False for {self.call_sid}")
+            # Avoid duplicating the insurance question: greeting already includes it
+            if getattr(self, "_sent_greeting", False):
+                self._sent_greeting = False
             await self.push_frame(frame, direction)
 
         elif isinstance(frame, UserStartedSpeakingFrame):
@@ -315,13 +331,17 @@ class VoiceHandler(FrameProcessor):
             logger.info(f"Sending response: '{response_text[:50]}...' for {self.call_sid}")
             
             try:
-                print(f"🔥 Creating TextFrame with response for TTS processing...")
-                text_frame = TextFrame(text=response_text)
-                print(f"🚀 Yielding TextFrame to pipeline: {text_frame}")
-                yield text_frame
+                print(f"🔥 Creating TextFrame(s) with response for TTS processing...")
+                # Split long responses into sentence-sized chunks to avoid TTS truncation
+                import re as _re
+                sentences = [_s.strip() for _s in _re.split(r"(?<=[.!?])\s+", response_text) if _s.strip()]
+                for _sent in sentences:
+                    text_frame = TextFrame(text=_sent)
+                    print(f"🚀 Yielding TextFrame to pipeline: {text_frame}")
+                    yield text_frame
                 # Add assistant response to transcript
                 state.add_transcript_entry("assistant", response_text)
-                print(f"✅ Successfully yielded TextFrame for TTS conversion")
+                print(f"✅ Successfully yielded TextFrame(s) for TTS conversion")
                 logger.info(f"Successfully sent response for {self.call_sid}")
                 
             except Exception as e:

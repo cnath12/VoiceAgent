@@ -129,6 +129,17 @@ class SchedulingHandler:
                     break
         
         if not selected_slot:
+            # If no slots exist, synthesize a default next day 2 PM slot
+            if not self._available_slots:
+                next_day = datetime.now() + timedelta(days=1)
+                proposed = next_day.replace(hour=14, minute=0, second=0, microsecond=0)
+                display = proposed.strftime('%A, %B %d at %I:%M %p')
+                self._available_slots = [{
+                    "id": "default",
+                    "datetime": proposed,
+                    "display": display,
+                    "keywords": ["2 pm", "tomorrow", next_day.strftime('%A').lower()]
+                }]
             # Permissive: default to first available slot
             selected_slot = self._available_slots[0]
         

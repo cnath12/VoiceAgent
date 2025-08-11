@@ -33,6 +33,21 @@ class DemographicsHandler:
     async def _handle_full_address(self, user_input: str, state: ConversationState) -> str:
         """Parse and validate full address."""
         
+        # Filter out non-address responses
+        non_address_responses = [
+            "yes", "no", "okay", "ok", "sure", "what", "huh", "hello", "hi",
+            "i want", "i need", "can you", "could you", "please", "thank you",
+            "good", "fine", "great", "perfect", "alright"
+        ]
+        
+        input_lower = user_input.lower().strip()
+        
+        # If input is clearly not an address, ask again
+        if (len(user_input.strip()) < 5 or 
+            any(phrase in input_lower for phrase in non_address_responses) or
+            not any(char.isdigit() for char in user_input)):  # Address should have numbers
+            return "I need your complete street address for our records. Please provide your house number and street name, like '123 Main Street, San Francisco, CA 94101'."
+        
         # Try to parse address components
         address_parts = self._parse_address(user_input)
         

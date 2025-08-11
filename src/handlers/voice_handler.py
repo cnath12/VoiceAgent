@@ -43,8 +43,13 @@ class VoiceHandler(FrameProcessor):
         self._last_user_input_time = None
         self._silence_check_task = None
         self._initialized = False
-        self._greeting_sent = False
+        # Greeting sent in StartFrame handler only (no duplicates)
         self._tts_warmed_up = False
+        
+        # Prevent question repetition
+        self._last_response = None
+        self._response_count = 0
+        self._max_same_response = 2  # Maximum times to ask same question
     
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         """Process incoming frames."""
@@ -78,6 +83,17 @@ class VoiceHandler(FrameProcessor):
         # Handle StartFrame - MUST pass through first, then initialize
         if isinstance(frame, StartFrame):
             print(f"🚀 VoiceHandler received StartFrame - processing and forwarding")
+            
+            # Only process the FIRST StartFrame to avoid duplicate greetings
+            if hasattr(self, '_start_frame_processed'):
+                print(f"⚠️ StartFrame already processed - skipping duplicate greeting")
+                await super().process_frame(frame, direction)
+                await self.push_frame(frame, direction)
+                return
+            
+            # Mark StartFrame as processed to prevent duplicates    
+            self._start_frame_processed = True
+            
             # Handle internal Pipecat state first
             await super().process_frame(frame, direction)
             print(f"🔧 VoiceHandler internal state processed, now forwarding to TTS")
@@ -90,12 +106,22 @@ class VoiceHandler(FrameProcessor):
                 logger.info(f"VoiceHandler initialized for {self.call_sid}")
                 
                 # DEEPGRAM TTS FIX: Send greeting immediately since DeepgramTTS doesn't send TTSStartedFrame
-                print(f"🎯 DEEPGRAM GREETING: Sending greeting immediately (DeepgramTTS doesn't send TTSStartedFrame)")
-                greeting = "Hello! This is Assort Health, your AI appointment scheduler. Can you hear me clearly? Please say yes or hello so I can help you schedule your appointment."
-                print(f"🗣️ Sending greeting: '{greeting}'")
+                print(f"🎯 CONTINUOUS GREETING: Sending uninterrupted greeting")
+                
+                # Make greeting more TTS-friendly with natural pauses but no breaks
+                greeting = ("Hello! This is Assort Health, your AI appointment scheduler. "
+                           "I'm here to help you schedule your appointment today. "
+                           "First, are you experiencing a medical emergency?")
+                
+                print(f"🗣️ Sending continuous greeting (length: {len(greeting)} chars)")
+                print(f"🗣️ Greeting text: '{greeting}'")
                 logger.info(f"Sending initial greeting to {self.call_sid}")
-                await self.push_frame(TextFrame(text=greeting), FrameDirection.DOWNSTREAM)
-                print(f"✅ Greeting TextFrame sent to TTS service!")
+                
+                # Create TextFrame with explicit handling
+                greeting_frame = TextFrame(text=greeting)
+                print(f"🔥 Created greeting TextFrame: {greeting_frame}")
+                await self.push_frame(greeting_frame, FrameDirection.DOWNSTREAM)
+                print(f"✅ Continuous greeting TextFrame sent to TTS service!")
             return
         
         # Handle speech events
@@ -103,18 +129,8 @@ class VoiceHandler(FrameProcessor):
             print(f"🔊 TTS STARTED FRAME received for {self.call_sid}")
             logger.info(f"TTS started frame received for {self.call_sid}")
             
-            # TTS is ready; send greeting if not yet sent
-            if not self._greeting_sent:
-                greeting = "Hello! This is Assort Health. Can you hear me? Please say hello to test the audio."
-                try:
-                    print(f"🎙️ TTS is ready! Sending initial greeting: '{greeting[:50]}...'")
-                    await self.push_frame(TextFrame(text=greeting), FrameDirection.DOWNSTREAM)
-                    self._greeting_sent = True
-                    print(f"✅ Initial greeting sent successfully via TTS!")
-                    logger.info(f"Initial greeting sent (on TTS start) for {self.call_sid}")
-                except Exception as e:
-                    print(f"❌ Failed to send initial greeting: {e}")
-                    logger.error(f"Failed to send greeting on TTS start for {self.call_sid}: {e}")
+            # NO GREETING HERE - greeting already sent in StartFrame handler to prevent duplicates
+            print(f"🚫 Skipping TTSStartedFrame greeting - already sent in StartFrame handler")
             await self.push_frame(frame, direction)
             
         elif isinstance(frame, TTSStoppedFrame):
@@ -238,6 +254,29 @@ class VoiceHandler(FrameProcessor):
         
         # Send response as TextFrame with robust error handling
         if response_text and response_text.strip():
+            # CHECK FOR REPETITION - Prevent asking same question multiple times
+            if self._last_response == response_text:
+                self._response_count += 1
+                print(f"🚨 REPETITION WARNING: Same response #{self._response_count} - '{response_text[:50]}...'")
+                
+                if self._response_count >= self._max_same_response:
+                    # Escalate or provide alternative response
+                    escalated_response = self._handle_repetition_escalation(response_text, state)
+                    if escalated_response:
+                        response_text = escalated_response
+                        print(f"🔄 ESCALATED RESPONSE: '{response_text[:50]}...'")
+                        # Reset counter for new response
+                        self._response_count = 0
+                        self._last_response = response_text
+                    else:
+                        print(f"🛑 BLOCKING REPETITION: Skipping identical response #{self._response_count}")
+                        return  # Skip sending the response
+            else:
+                # New response, reset counter
+                self._response_count = 1
+                self._last_response = response_text
+                print(f"✅ NEW RESPONSE: '{response_text[:50]}...'")
+            
             print(f"\n🤖 ===== AGENT RESPONDING: '{response_text}' =====")
             logger.info(f"Sending response: '{response_text[:50]}...' for {self.call_sid}")
             
@@ -266,13 +305,33 @@ class VoiceHandler(FrameProcessor):
                 self.call_sid, 
                 ConversationPhase.EMERGENCY_CHECK
             )
-            # Include proper Assort Health greeting + emergency check
-            return "Hello! Thank you for calling Assort Health. I'm your AI assistant and I'm here to help schedule your appointment. First, are you experiencing a medical emergency?"
+            # NO additional message - greeting already included emergency question
+            # Return None to avoid sending another TTS frame
+            return None
         
         elif phase == ConversationPhase.EMERGENCY_CHECK:
-            if "emergency" in user_input.lower() or "911" in user_input:
+            # Smart emergency detection - look for positive vs negative responses
+            input_lower = user_input.lower()
+            
+            # Positive emergency indicators
+            emergency_yes = any(phrase in input_lower for phrase in [
+                "yes", "experiencing emergency", "need emergency", "911", "urgent", 
+                "having emergency", "this is emergency"
+            ])
+            
+            # Negative emergency indicators  
+            emergency_no = any(phrase in input_lower for phrase in [
+                "no", "not experiencing", "no emergency", "not emergency", 
+                "not urgent", "i'm not", "not having"
+            ])
+            
+            print(f"🚨 EMERGENCY CHECK: Input='{user_input}', Yes={emergency_yes}, No={emergency_no}")
+            
+            if emergency_yes and not emergency_no:
                 return "Please hang up and dial 911 immediately for emergency assistance."
             else:
+                # Assume no emergency and proceed to insurance
+                print(f"✅ NO EMERGENCY detected, proceeding to insurance phase")
                 await state_manager.transition_phase(
                     self.call_sid,
                     ConversationPhase.INSURANCE
@@ -282,7 +341,12 @@ class VoiceHandler(FrameProcessor):
         # Use specific handlers for data collection phases
         elif phase in self.phase_handlers:
             handler = self.phase_handlers[phase]
-            return await handler.process_input(user_input, state)
+            handler_name = type(handler).__name__
+            print(f"🎯 ROUTING: Phase={phase}, Handler={handler_name}, Input='{user_input[:50]}...'")
+            logger.info(f"Routing to {handler_name} for phase {phase}: '{user_input[:50]}...'")
+            response = await handler.process_input(user_input, state)
+            print(f"🤖 HANDLER RESPONSE: {handler_name} -> '{response[:100]}...'")
+            return response
         
         # Handle confirmation phase
         elif phase == ConversationPhase.CONFIRMATION:
@@ -333,18 +397,18 @@ class VoiceHandler(FrameProcessor):
         self._silence_check_task = asyncio.create_task(self._monitor_silence())
     
     async def _monitor_silence(self):
-        """Monitor for silence and check in with user after 10 seconds."""
+        """Monitor for silence and check in with user after 30 seconds."""
         import asyncio
         import time
         
         try:
             while True:
-                await asyncio.sleep(10)  # Wait 10 seconds
+                await asyncio.sleep(30)  # Wait 30 seconds - much more patient
                 
                 if self._last_user_input_time:
                     time_since_input = time.time() - self._last_user_input_time
                     
-                    if time_since_input >= 10:
+                    if time_since_input >= 30:
                         logger.info(f"Silence detected for {self.call_sid}, checking in with user")
                         
                         # Send check-in message
@@ -358,3 +422,26 @@ class VoiceHandler(FrameProcessor):
             logger.info(f"Silence monitoring cancelled for {self.call_sid}")
         except Exception as e:
             logger.error(f"Error in silence monitoring for {self.call_sid}: {e}")
+    
+    def _handle_repetition_escalation(self, repeated_response: str, state: ConversationState) -> Optional[str]:
+        """Handle cases where the same response would be repeated multiple times."""
+        
+        # If asking for insurance info repeatedly, provide more guidance
+        if "insurance provider name" in repeated_response.lower():
+            return ("I understand you may be having trouble. Let me explain what I need. "
+                   "I need the name of your insurance company - like Kaiser Permanente, "
+                   "Blue Cross Blue Shield, Aetna, Cigna, UnitedHealthcare, or another provider. "
+                   "Can you tell me which insurance company you have?")
+        
+        # If asking for emergency info repeatedly, move forward
+        elif "medical emergency" in repeated_response.lower():
+            logger.info(f"Emergency question repeated, assuming no emergency and moving forward for {self.call_sid}")
+            # Directly transition to insurance
+            import asyncio
+            asyncio.create_task(state_manager.transition_phase(self.call_sid, ConversationPhase.INSURANCE))
+            return "I'll assume you're not experiencing an emergency. Let me collect your insurance information to help schedule your appointment. What's your insurance provider name?"
+        
+        # If asking for other info repeatedly, provide help
+        else:
+            return ("I understand this might be confusing. Let me know if you need any clarification, "
+                   "or say 'help' if you'd like me to explain what information I need.")

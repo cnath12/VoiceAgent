@@ -91,7 +91,6 @@ async def create_pipeline(call_sid: str, transport: FastAPIWebsocketTransport) -
         )
         
         # Test Deepgram credentials immediately
-        print(f"🔑 Testing Deepgram API key (first 8 chars): {settings.deepgram_api_key[:8]}...")
         if not settings.deepgram_api_key or len(settings.deepgram_api_key) < 10:
             print(f"⚠️ WARNING: Deepgram API key appears invalid!")
             logger.warning(f"Deepgram API key appears invalid for call {call_sid}")
@@ -130,26 +129,46 @@ async def create_pipeline(call_sid: str, transport: FastAPIWebsocketTransport) -
         deepgram_logger.setLevel(logging.DEBUG)
         
         # Test Deepgram API key immediately
-        print(f"🔑 Testing Deepgram API key (first 8 chars): {settings.deepgram_api_key[:8]}...")
+        print(f"🔑 Validating Deepgram TTS API key...")
         if not settings.deepgram_api_key or len(settings.deepgram_api_key) < 20:
             print(f"⚠️ WARNING: Deepgram API key appears invalid!")
             logger.warning(f"Deepgram API key appears invalid for call {call_sid}")
         else:
-            print(f"✅ Deepgram API key format looks valid")
+            print(f"✅ Deepgram TTS API key format looks valid")
         
         # Switch to Deepgram TTS - optimized for telephony 
         from pipecat.services.deepgram.tts import DeepgramTTSService
         
-        # Create persistent aiohttp session for TTS
-        tts_session = aiohttp.ClientSession()
+        # SIMPLE TTS FIX: Force fresh HTTP sessions without breaking framework
+        print(f"🔧 Creating TTS with ANTI-CACHE session")
+        
+        # Create session with aggressive anti-caching 
+        tts_session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=30),
+            connector=aiohttp.TCPConnector(
+                limit=1,
+                force_close=True,  # Forces new connection each time
+                use_dns_cache=False,  # No DNS caching
+                enable_cleanup_closed=True
+            ),
+            headers={
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0',
+                'Connection': 'close'  # HTTP/1.1 close connection
+            }
+        )
+        
         tts_service = DeepgramTTSService(
             aiohttp_session=tts_session,
             api_key=settings.deepgram_api_key,
-            voice="aura-asteria-en",  # Optimized for telephony
-            sample_rate=8000,     # MATCH Twilio sample rate  
-            encoding="linear16",  # Use standard PCM, let transport handle conversion
-            container="none",     # No audio container headers to prevent static
+            voice="aura-asteria-en",  
+            sample_rate=8000,     
+            encoding="linear16",  
+            container="none",     
         )
+        
+        print(f"🚀 TTS service with anti-cache session created")
         
         # Add debugging wrapper to monitor TTS frame processing
         original_process_frame = tts_service.process_frame

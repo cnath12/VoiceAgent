@@ -1,32 +1,39 @@
 # Healthcare Voice AI Agent
 
-A production-ready voice AI agent for healthcare appointment scheduling, built with Pipecat AI framework and integrated with Twilio for phone connectivity.
+A production-ready voice AI agent for healthcare appointment scheduling, built on the Pipecat real‑time audio pipeline and integrated with Twilio Voice.
 
-## 🏥 Features
+## 🏥 What it does
 
-- **Automated Appointment Scheduling**: Handles complete appointment booking workflow via phone
-- **Healthcare-Optimized**: Specialized for medical terminology and patient interactions
-- **HIPAA-Ready Architecture**: Designed with healthcare compliance in mind
-- **Multi-Phase Conversation Flow**:
-  - Emergency screening
-  - Insurance information collection
-  - Chief complaint assessment
-  - Demographics and address validation
-  - Contact information gathering
-  - Provider selection
-  - Appointment time selection
-  - Email confirmation
+- **End‑to‑end scheduling over the phone**: Insurance → chief complaint → address → contact → provider → time → confirmation email
+- **Real‑time speech**: Telephony audio in/out with Deepgram STT + TTS at 8 kHz (telephony)
+- **Stateful, phase‑based flow**: Deterministic handlers per phase with minimal LLM usage
+- **Secure**: No PHI in logs, Twilio webhook signature validation (prod), optional admin key for debug
 
-## 🛠️ Technology Stack
+Conversation phases:
+- Insurance
+- Chief complaint (duration, pain scale)
+- Demographics (address capture + optional USPS validation)
+- Contact info (phone, optional email)
+- Provider selection (mock service)
+- Appointment time selection (mock slots)
+- Confirmation and email
 
-- **Framework**: Pipecat AI (Open Source)
-- **LLM**: OpenAI GPT-3.5 Turbo
-- **Speech-to-Text**: Deepgram Nova-2 Medical
-- **Text-to-Speech**: Cartesia Sonic Turbo
-- **Phone Integration**: Twilio Voice
-- **Address Validation**: USPS Web Tools API
-- **Email Service**: SMTP (Gmail)
-- **Deployment**: Docker + Render
+## 🛠️ Architecture & key choices
+
+High‑level flow (Twilio → FastAPI/Pipecat → Services):
+
+1) Twilio Voice MediaStream connects to `wss://<PUBLIC_HOST>/voice/stream/{call_sid}` created by `/voice/answer`.
+2) Pipecat pipeline: `transport.input() → Deepgram STT → VoiceHandler → Deepgram TTS → transport.output()`.
+3) Hybrid STT: we also forward Twilio audio directly to Deepgram WebSocket and inject final transcripts back into the pipeline to reduce latency.
+4) `VoiceHandler` routes user text to phase handlers; handlers update in‑memory `ConversationState` and emit concise responses.
+
+Technology choices:
+- Pipecat: structured frame processors and low‑latency audio pipeline.
+- Deepgram STT (phonecall model) + Deepgram TTS: optimized for 8 kHz telephony, low cost.
+- Minimal LLM use: OpenAI is used only for small classification/labeling tasks (e.g., option picking, payer mapping) to maintain determinism and speed. Natural‑language responses are template/handler driven.
+- FastAPI: simple HTTP + WebSocket hosting and Twilio webhook endpoints.
+- Render: frictionless container hosting with HTTPS and TLS termination.
+- USPS API (optional): address validation with mock fallback.
 
 ## 📋 Prerequisites
 
@@ -35,11 +42,10 @@ A production-ready voice AI agent for healthcare appointment scheduling, built w
 - API Keys for:
   - OpenAI
   - Deepgram
-  - Cartesia
   - USPS Web Tools (optional)
 - Gmail account with App Password for SMTP
 
-## 🚀 Quick Start
+## 🚀 Quick start (local)
 
 ### 1. Clone the Repository
 
@@ -55,50 +61,57 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-### 3. Configure Environment
+### 3. Configure environment
 
 Update `.env` with your API credentials:
 
 ```env
-# Twilio
-TWILIO_ACCOUNT_SID=your_account_sid
-TWILIO_AUTH_TOKEN=your_auth_token
+# Twilio (required)
+TWILIO_ACCOUNT_SID=...
+TWILIO_AUTH_TOKEN=...
 TWILIO_PHONE_NUMBER=+1xxxxxxxxxx
+# Optionally support multiple inbound DIDs (comma‑separated)
+TWILIO_PHONE_NUMBERS=+1xxxxxxxxxx,+1yyyyyyyyyy
 
-# AI Services
-OPENAI_API_KEY=your_openai_key
-DEEPGRAM_API_KEY=your_deepgram_key
-CARTESIA_API_KEY=your_cartesia_key
+# AI services (required)
+OPENAI_API_KEY=...
+DEEPGRAM_API_KEY=...
 
-# Email (Gmail)
-SMTP_EMAIL=your_email@gmail.com
-SMTP_PASSWORD=your_app_password
+# Email (optional in non‑prod)
+SMTP_EMAIL=...
+SMTP_PASSWORD=...
 
-# USPS (Optional)
-USPS_USER_ID=your_usps_user_id
+# USPS (optional)
+USPS_USER_ID=...
+
+# App
+APP_ENV=development
+LOG_LEVEL=INFO
+# For local/ngrok only (Render sets this in its env panel)
+PUBLIC_HOST=<your-ngrok-host>.ngrok.io
+# Protects /debug/state in production
+ADMIN_API_KEY=
 ```
 
-### 4. Start the Application
+### 4. Start the application
 
 ```bash
 source venv/bin/activate
 python -m uvicorn src.main:app --reload
 ```
 
-### 5. Configure Twilio
+### 5. Configure Twilio (local or hosted)
 
 1. Go to your Twilio Console
 2. Navigate to Phone Numbers > Manage > Active Numbers
 3. Click on your phone number
 4. Set the webhook URL for incoming calls:
-   ```
-   https://YOUR_DOMAIN/voice/answer
-   ```
+   POST to `https://YOUR_DOMAIN/voice/answer`
 5. Save the configuration
 
-## 📞 Testing the Agent
+## 📞 Testing the agent
 
-### Local Testing with ngrok
+### Local testing with ngrok
 
 ```bash
 # Install ngrok
@@ -111,7 +124,7 @@ ngrok http 8000
 # Use the ngrok URL in Twilio webhook configuration
 ```
 
-### Test Conversation Flow
+### Test conversation flow
 
 1. Call your Twilio phone number
 2. Follow the prompts:
@@ -123,7 +136,7 @@ ngrok http 8000
    - Select a provider
    - Choose appointment time
 
-## 🚢 Deployment
+## 🚢 Deployment (Render)
 
 ### Final Setup Instructions
 
@@ -160,31 +173,38 @@ git push -u origin main
 2. New > Web Service
 3. Connect GitHub repository
 4. Select `voice-healthcare-agent`
-5. Use existing `render.yaml`
-6. Add environment variables
-7. Deploy!
+5. Use Dockerfile at `deployment/Dockerfile` (Render auto‑detects)
+6. Add environment variables in the Render UI: 
+   - TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER (and optional TWILIO_PHONE_NUMBERS)
+   - OPENAI_API_KEY, DEEPGRAM_API_KEY
+   - APP_ENV=production (or staging)
+   - LOG_LEVEL=INFO
+   - PUBLIC_HOST=<your‑render‑hostname> (e.g., voiceagent-xxxx.onrender.com)
+   - ADMIN_API_KEY=<strong random string>
+7. Manual Deploy → Deploy latest commit.
 
 #### 5. Configure Twilio
 
-Once deployed, update Twilio webhook to:
-```
-https://your-app-name.onrender.com/voice/answer
-```
+Once deployed, set your Twilio number → Voice → “A CALL COMES IN” webhook to:
+`https://<your-render-hostname>/voice/answer` (POST)
 
-## 📊 Performance Metrics
+## 📊 Performance & ops
 
-- **Response Time**: < 200ms voice processing latency
+- **Latency**: low hundreds of ms end‑to‑end on trial tiers
 - **Conversation Success Rate**: ~85% completion rate
 - **Average Call Duration**: 3.5 minutes
 - **Concurrent Calls**: Scales to 10+ simultaneous calls
 
-## 🔒 Security Considerations
+## 🔒 Security considerations
 
-- All API keys stored as environment variables
-- No PHI stored in logs
-- Audio streams processed in real-time without storage
-- Email confirmations include only necessary information
-- Address validation without storing full addresses
+- All secrets are environment variables (never committed)
+- Twilio webhook signature validation enforced when `APP_ENV=production`
+- `/debug/state/{call_sid}` requires `x-admin-key` header when `APP_ENV=production`
+- No PHI in logs; transcripts reside only in process memory during a call
+- Audio is streamed in real‑time and not stored
+- Address validation performed without persisting full address beyond session
+
+Twilio Trial tip: if callers are blocked, add their numbers under “Verified Caller IDs” in Twilio. This is separate from your Twilio DID(s) configured in app env.
 
 ## 🐛 Troubleshooting
 
@@ -194,6 +214,7 @@ https://your-app-name.onrender.com/voice/answer
 - Ensure your server is publicly accessible
 - Check Twilio webhook URL configuration
 - Verify ngrok is running (for local testing)
+ - On Render, set PUBLIC_HOST to the exact Render hostname
 
 #### Audio quality issues
 - Verify Deepgram language model is set to "nova-2-medical"
@@ -204,6 +225,37 @@ https://your-app-name.onrender.com/voice/answer
 - Verify Gmail App Password (not regular password)
 - Check SMTP settings
 - Ensure "Less secure app access" is configured
+
+#### ImportError: No module named 'pydantic_settings'
+- Make sure `pydantic-settings` is in `requirements.txt` and redeploy.
+
+#### 403 on /voice/answer in production
+- Twilio signature validation failed. Verify `TWILIO_AUTH_TOKEN` and that your webhook URL exactly matches what the app used to compute the signature.
+
+#### / returns 404
+- Expected. Use `/health` for readiness and `/voice/answer` (POST) for Twilio.
+
+## 🧱 Current limitations
+- In‑memory state (per‑instance). A dyno restart drops active call state.
+- Mock provider/slot service.
+- English only.
+- Trial-tier constraints from Twilio can add a preamble and limit inbound/outbound behavior.
+
+## 🗺️ Roadmap / What we would add with more time
+- Silence/long‑pause check‑ins and barge‑in handling (e.g., confirm “are you still there?” and gracefully resume)
+- Persistent state (Redis) so instances can scale horizontally and survive restarts
+- Real provider/slot APIs and booking integration with idempotent writes
+- Robust USPS address verification with secondary services and auto‑correction prompts
+- Better NLU fallbacks locally (grammar‑based extractors) to reduce LLM calls further
+- Observability: structured logs, metrics, traces, and call recordings (configurable and compliant)
+- Security hardening: rate limiting, IP allowlists, secret rotation, WAF headers
+- Internationalization, accents/models tuning, and multi‑language support
+- CI with automated Twilio MediaStream E2E tests using Twilio’s test harness
+
+## 🧠 Design notes
+- Deterministic handler‑first flow keeps latency and cost low, with LLM only for small disambiguation tasks.
+- Deepgram TTS is used to avoid cartesian caching issues and match 8 kHz telephony; we pre‑warm TTS and split responses into sentences to reduce truncation risk.
+- A hybrid STT path directly feeds Deepgram WS with Twilio media frames for resilience and reduced latency.
 
 ## 📝 License
 

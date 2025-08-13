@@ -32,8 +32,6 @@ from src.utils.logger import get_logger
 import logging
 
 logger = get_logger(__name__)
-# Temporarily enable debug logging
-logger.setLevel(logging.DEBUG)
 settings = get_settings()
 
 # Global pipeline runner
@@ -51,6 +49,37 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+def _is_production() -> bool:
+    try:
+        return settings.app_env.lower() == "production"
+    except Exception:
+        return False
+
+
+async def _validate_twilio_request(request: Request) -> bool:
+    """Validate Twilio webhook signature in production.
+
+    Returns True if valid or validation is skipped (non-production), False otherwise.
+    """
+    if not _is_production():
+        return True
+    try:
+        validator = RequestValidator(settings.twilio_auth_token)
+        # Build expected URL using https and the effective host
+        configured_host = settings.public_host.strip()
+        header_host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+        host = configured_host or header_host or request.url.hostname
+        scheme = request.headers.get("x-forwarded-proto", "https")
+        expected_url = f"{scheme}://{host}{request.url.path}"
+        # Read form data for validation
+        form = await request.form()
+        params = dict(form)
+        signature = request.headers.get("x-twilio-signature", "")
+        return bool(validator.validate(expected_url, params, signature))
+    except Exception:
+        return False
 
 
 async def create_pipeline(call_sid: str, transport: FastAPIWebsocketTransport) -> Pipeline:
@@ -283,6 +312,10 @@ async def create_pipeline(call_sid: str, transport: FastAPIWebsocketTransport) -
 async def handle_incoming_call(request: Request):
     """Handle incoming Twilio call from any configured number."""
     print(f"🚨 IMMEDIATE DEBUG: /voice/answer endpoint called!")
+    # Validate request signature in production
+    if not await _validate_twilio_request(request):
+        logger.warning("Twilio signature validation failed for /voice/answer")
+        raise HTTPException(status_code=403, detail="Forbidden")
     form_data = await request.form()
     call_sid = form_data.get("CallSid", "")
     from_number = form_data.get("From", "")
@@ -326,6 +359,9 @@ async def handle_incoming_call(request: Request):
 @app.post("/voice/recording")
 async def handle_recording(request: Request):
     """Handle recording callback from Twilio."""
+    if not await _validate_twilio_request(request):
+        logger.warning("Twilio signature validation failed for /voice/recording")
+        raise HTTPException(status_code=403, detail="Forbidden")
     form_data = await request.form()
     recording_url = form_data.get("RecordingUrl", "")
     call_sid = form_data.get("CallSid", "")
@@ -672,8 +708,14 @@ async def health_check():
 
 
 @app.get("/debug/state/{call_sid}")
-async def get_conversation_state(call_sid: str):
+async def get_conversation_state(call_sid: str, request: Request):
     """Return the in-memory conversation state for debugging."""
+    # Optional admin API key check (guard in production)
+    if _is_production():
+        api_key = settings.admin_api_key.strip()
+        incoming = request.headers.get("x-admin-key", "").strip()
+        if api_key and incoming != api_key:
+            raise HTTPException(status_code=403, detail="Forbidden")
     state = await state_manager.get_state(call_sid)
     if not state:
         return {"error": "unknown call_sid"}

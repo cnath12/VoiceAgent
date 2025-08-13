@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     # Optional explicit public host for Twilio callbacks and WS stream
     public_host: str = ""
+    # Admin API key to protect debug endpoints
+    admin_api_key: str = ""
     # Diagnostics
     echo_test: bool = False
     

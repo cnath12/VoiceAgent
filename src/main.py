@@ -197,6 +197,12 @@ async def create_pipeline(call_sid: str, transport: FastAPIWebsocketTransport) -
             result = await original_process_frame(frame, direction)
             t1 = _time.time()
             print(f"⏱️ TTS process_frame duration for {frame_type}: {(t1 - t0)*1000:.1f} ms")
+            if frame_type == "TextFrame":
+                # measure time until BotStartedSpeaking arrives using a simple flag
+                try:
+                    setattr(debug_tts_process_frame, "_last_textframe_time", t0)
+                except Exception:
+                    pass
             
             if frame_type == "TextFrame":
                 print(f"📢 TTS Processed TextFrame - should generate audio now")
@@ -275,18 +281,28 @@ async def create_pipeline(call_sid: str, transport: FastAPIWebsocketTransport) -
 
 @app.post("/voice/answer")
 async def handle_incoming_call(request: Request):
-    """Handle incoming Twilio call."""
+    """Handle incoming Twilio call from any configured number."""
     print(f"🚨 IMMEDIATE DEBUG: /voice/answer endpoint called!")
     form_data = await request.form()
     call_sid = form_data.get("CallSid", "")
     from_number = form_data.get("From", "")
-    print(f"🚨 IMMEDIATE DEBUG: Call {call_sid} from {from_number}")
+    to_number = form_data.get("To", "")
+    print(f"🚨 IMMEDIATE DEBUG: Call {call_sid} from {from_number} to {to_number}")
 
-    logger.info(f"Incoming call: {call_sid} from {from_number}")
+    logger.info(f"Incoming call: {call_sid} from {from_number} to {to_number}")
     try:
-      logger.debug(f"Full Twilio form payload: {dict(form_data)}")
+        logger.debug(f"Full Twilio form payload: {dict(form_data)}")
     except Exception:
-      pass
+        pass
+
+    # Optional: Verify the dialed number belongs to our configured list
+    try:
+        allowed = settings.phone_numbers_list
+        if to_number and allowed and to_number not in allowed:
+            logger.warning(f"Call to unconfigured number: {to_number} (allowed: {allowed})")
+    except Exception:
+        # Non-fatal; proceed
+        pass
 
     # Determine public host for Twilio Stream
     configured_host = settings.public_host.strip()
@@ -677,4 +693,17 @@ async def get_conversation_state(call_sid: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    import os
+    
+    # Use PORT from environment variable (Render provides this)
+    port = int(os.environ.get("PORT", 8000))
+    
+    print(f"🚀 Starting server on port {port}")
+    
+    # Run with the dynamic port
+    uvicorn.run(
+        "src.main:app",  # or just app if running directly
+        host="0.0.0.0",
+        port=port,
+        log_level="info"
+    )

@@ -11,12 +11,13 @@ class Settings(BaseSettings):
     # Twilio
     twilio_account_sid: str
     twilio_auth_token: str
-    twilio_phone_number: str
+    twilio_phone_number: str  # Keep for backward compatibility
+    twilio_phone_numbers: str = ""  # Comma-separated list of additional numbers
     
     # AI Services
     openai_api_key: str
     deepgram_api_key: str
-    cartesia_api_key: str
+    cartesia_api_key: str = ""  # Optional
     # Deepgram tuning
     deepgram_model: str = "nova-2-phonecall"  # Optimized for phone calls
     deepgram_encoding: str = "mulaw"  # default to mu-law for Twilio telephony
@@ -25,8 +26,8 @@ class Settings(BaseSettings):
     # Email
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
-    smtp_email: str
-    smtp_password: str
+    smtp_email: str = ""  # Optional for testing
+    smtp_password: str = ""  # Optional for testing
     
     # USPS API
     usps_user_id: str = ""
@@ -46,7 +47,29 @@ class Settings(BaseSettings):
     @property
     def notification_emails(self) -> list[str]:
         """Parse comma-separated email string into list."""
+        if not self.notification_emails_str:
+            return []
         return [email.strip() for email in self.notification_emails_str.split(",") if email.strip()]
+
+    @property
+    def phone_numbers_list(self) -> list[str]:
+        """Return all configured Twilio phone numbers without duplicates (preserve order)."""
+        numbers: list[str] = []
+        # Add primary number first
+        if getattr(self, "twilio_phone_number", None):
+            numbers.append(self.twilio_phone_number)
+        # Add additional numbers
+        if getattr(self, "twilio_phone_numbers", None):
+            additional = [n.strip() for n in self.twilio_phone_numbers.split(",") if n.strip()]
+            numbers.extend(additional)
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for n in numbers:
+            if n not in seen:
+                deduped.append(n)
+                seen.add(n)
+        return deduped
     
     class Config:
         env_file = ".env"

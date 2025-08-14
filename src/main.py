@@ -45,7 +45,13 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("Shutting down healthcare voice agent...")
     if runner:
-        await runner.stop()
+        try:
+            stop = getattr(runner, "stop", None)
+            if callable(stop):
+                await stop()
+        except Exception:
+            # Runner is already finished or stop() is unavailable
+            pass
 
 
 app = FastAPI(lifespan=lifespan)

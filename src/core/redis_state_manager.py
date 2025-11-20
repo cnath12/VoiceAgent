@@ -1,12 +1,14 @@
 """Redis-backed implementation of conversation state manager."""
 from typing import Optional
 import json
+import time
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from src.core.models import ConversationState, ConversationPhase
 from src.core.state_manager_base import StateManagerBase
 from src.utils.logger import get_logger
+from src.utils.metrics import track_state_operation, redis_connected
 
 logger = get_logger(__name__)
 
@@ -53,6 +55,7 @@ class RedisStateManager(StateManagerBase):
 
     async def create_state(self, call_sid: str) -> ConversationState:
         """Create new conversation state in Redis."""
+        start_time = time.time()
         try:
             state = ConversationState(call_sid=call_sid)
 
@@ -75,9 +78,15 @@ class RedisStateManager(StateManagerBase):
                 }
             )
 
+            # Track metrics
+            duration = time.time() - start_time
+            track_state_operation("create", "redis", duration)
+
             return state
 
         except RedisError as e:
+            duration = time.time() - start_time
+            track_state_operation("create", "redis", duration)
             logger.error(
                 f"Redis error creating state for {call_sid}: {e}",
                 exc_info=True
@@ -86,25 +95,34 @@ class RedisStateManager(StateManagerBase):
 
     async def get_state(self, call_sid: str) -> Optional[ConversationState]:
         """Get conversation state from Redis."""
+        start_time = time.time()
         try:
             key = self._get_key(call_sid)
             state_json = await self.redis.get(key)
 
             if not state_json:
+                duration = time.time() - start_time
+                track_state_operation("get", "redis", duration)
                 return None
 
             # Deserialize from JSON
             state = ConversationState.model_validate_json(state_json)
 
+            duration = time.time() - start_time
+            track_state_operation("get", "redis", duration)
             return state
 
         except RedisError as e:
+            duration = time.time() - start_time
+            track_state_operation("get", "redis", duration)
             logger.error(
                 f"Redis error getting state for {call_sid}: {e}",
                 exc_info=True
             )
             return None
         except Exception as e:
+            duration = time.time() - start_time
+            track_state_operation("get", "redis", duration)
             logger.error(
                 f"Error deserializing state for {call_sid}: {e}",
                 exc_info=True
@@ -117,11 +135,14 @@ class RedisStateManager(StateManagerBase):
         **kwargs
     ) -> Optional[ConversationState]:
         """Update conversation state in Redis."""
+        start_time = time.time()
         try:
             # Get current state
             state = await self.get_state(call_sid)
 
             if not state:
+                duration = time.time() - start_time
+                track_state_operation("update", "redis", duration)
                 logger.warning(f"Cannot update non-existent state for {call_sid}")
                 return None
 
@@ -147,9 +168,13 @@ class RedisStateManager(StateManagerBase):
                 extra={"updated_fields": list(kwargs.keys())}
             )
 
+            duration = time.time() - start_time
+            track_state_operation("update", "redis", duration)
             return state
 
         except RedisError as e:
+            duration = time.time() - start_time
+            track_state_operation("update", "redis", duration)
             logger.error(
                 f"Redis error updating state for {call_sid}: {e}",
                 exc_info=True
@@ -199,13 +224,19 @@ class RedisStateManager(StateManagerBase):
 
     async def cleanup_state(self, call_sid: str) -> None:
         """Remove conversation state from Redis."""
+        start_time = time.time()
         try:
             key = self._get_key(call_sid)
             await self.redis.delete(key)
 
             logger.info(f"Cleaned up state in Redis for {call_sid}")
 
+            duration = time.time() - start_time
+            track_state_operation("cleanup", "redis", duration)
+
         except RedisError as e:
+            duration = time.time() - start_time
+            track_state_operation("cleanup", "redis", duration)
             logger.error(
                 f"Redis error cleaning up state for {call_sid}: {e}",
                 exc_info=True
@@ -219,8 +250,10 @@ class RedisStateManager(StateManagerBase):
         """
         try:
             await self.redis.ping()
+            redis_connected.set(1)  # Update metrics: connected
             return True
         except RedisError:
+            redis_connected.set(0)  # Update metrics: disconnected
             return False
 
     async def get_active_calls_count(self) -> int:

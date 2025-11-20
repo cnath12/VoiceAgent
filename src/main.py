@@ -30,6 +30,14 @@ from src.handlers.voice_handler import VoiceHandler
 from src.utils.logger import get_logger
 from src.utils.structured_logging import log_pipeline_event
 from src.api.health import router as health_router
+from src.api.metrics import router as metrics_router
+from src.utils.metrics import (
+    active_calls,
+    total_calls,
+    call_duration,
+    twilio_webhooks,
+    websocket_errors,
+)
 import logging
 
 logger = get_logger(__name__)
@@ -59,6 +67,9 @@ app = FastAPI(lifespan=lifespan)
 
 # Include health check router
 app.include_router(health_router)
+
+# Include Prometheus metrics router
+app.include_router(metrics_router)
 
 
 def _is_production() -> bool:
@@ -303,9 +314,14 @@ async def create_pipeline(call_sid: str, transport: FastAPIWebsocketTransport) -
 async def handle_incoming_call(request: Request):
     """Handle incoming Twilio call from any configured number."""
     logger.debug("/voice/answer endpoint called")
+
+    # Track webhook call
+    twilio_webhooks.labels(webhook_type='answer', status='received').inc()
+
     # Validate request signature in production
     if not await _validate_twilio_request(request):
         logger.warning("Twilio signature validation failed for /voice/answer")
+        twilio_webhooks.labels(webhook_type='answer', status='auth_failed').inc()
         raise HTTPException(status_code=403, detail="Forbidden")
     form_data = await request.form()
     call_sid = form_data.get("CallSid", "")
@@ -372,6 +388,12 @@ async def handle_recording(request: Request):
 async def handle_media_stream(websocket: WebSocket, call_sid: str):
     """Handle Twilio MediaStream WebSocket connection."""
     logger.debug(f"WEBSOCKET DEBUG: Starting handler for {call_sid}")
+
+    # Track active call and start timer
+    active_calls.inc()
+    call_start_time = time.time()
+    call_status = "error"  # Will be updated on successful completion
+
     try:
         logger.debug(f"WebSocket connection attempt for call_sid: {call_sid}")
         logger.debug(f"Client: {websocket.client} for call {call_sid}")
@@ -638,11 +660,15 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
 
             await runner.run(task)
             logger.info(f"Pipeline runner finished normally for {call_sid}")
+            call_status = "success"  # Mark call as successful
         except asyncio.CancelledError:
             logger.warning(f"Pipeline runner cancelled for {call_sid}")
+            call_status = "cancelled"
             raise
         except Exception as e:
             logger.error(f"Pipeline runner error for {call_sid}: {e}")
+            call_status = "error"
+            websocket_errors.labels(error_type='pipeline_error').inc()
             raise
         finally:
             # Send EndFrame to properly close pipeline and stop all processors
@@ -672,7 +698,16 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
 
     except Exception as e:
         logger.error(f"Error in media stream for {call_sid}: {e}")
+        call_status = "error"
+        websocket_errors.labels(error_type='media_stream_error').inc()
     finally:
+        # Record call metrics
+        active_calls.dec()
+        total_calls.labels(status=call_status).inc()
+        call_duration_seconds = time.time() - call_start_time
+        call_duration.observe(call_duration_seconds)
+        logger.info(f"Call {call_sid} completed: status={call_status}, duration={call_duration_seconds:.2f}s")
+
         await state_manager.cleanup_state(call_sid)
         logger.info(f"MediaStream disconnected for {call_sid}")
 

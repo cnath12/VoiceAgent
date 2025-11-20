@@ -1,10 +1,12 @@
 """In-memory implementation of conversation state manager."""
 from typing import Dict, Optional
 import asyncio
+import time
 
 from src.core.models import ConversationState, ConversationPhase
 from src.core.state_manager_base import StateManagerBase
 from src.utils.logger import get_logger
+from src.utils.metrics import track_state_operation
 
 logger = get_logger(__name__)
 
@@ -29,16 +31,21 @@ class InMemoryStateManager(StateManagerBase):
 
     async def create_state(self, call_sid: str) -> ConversationState:
         """Create new conversation state."""
+        start_time = time.time()
         async with self._lock:
             state = ConversationState(call_sid=call_sid)
             self._states[call_sid] = state
             logger.info(f"Created conversation state for {call_sid}")
+            track_state_operation("create", "memory", time.time() - start_time)
             return state
 
     async def get_state(self, call_sid: str) -> Optional[ConversationState]:
         """Get conversation state by call SID."""
+        start_time = time.time()
         async with self._lock:
-            return self._states.get(call_sid)
+            result = self._states.get(call_sid)
+            track_state_operation("get", "memory", time.time() - start_time)
+            return result
 
     async def update_state(
         self,
@@ -46,6 +53,7 @@ class InMemoryStateManager(StateManagerBase):
         **kwargs
     ) -> Optional[ConversationState]:
         """Update conversation state."""
+        start_time = time.time()
         async with self._lock:
             state = self._states.get(call_sid)
             if state:
@@ -55,6 +63,7 @@ class InMemoryStateManager(StateManagerBase):
                     elif hasattr(state.patient_info, key):
                         setattr(state.patient_info, key, value)
                 logger.info(f"Updated state for {call_sid}: {kwargs}")
+            track_state_operation("update", "memory", time.time() - start_time)
             return state
 
     async def transition_phase(
@@ -73,7 +82,9 @@ class InMemoryStateManager(StateManagerBase):
 
     async def cleanup_state(self, call_sid: str) -> None:
         """Remove conversation state after completion."""
+        start_time = time.time()
         async with self._lock:
             if call_sid in self._states:
                 del self._states[call_sid]
                 logger.info(f"Cleaned up state for {call_sid}")
+            track_state_operation("cleanup", "memory", time.time() - start_time)

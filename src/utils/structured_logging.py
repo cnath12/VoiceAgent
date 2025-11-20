@@ -2,9 +2,12 @@
 
 This module provides helpers for structured logging to replace
 print() statements with proper logging calls.
+
+All logging functions automatically redact PHI for HIPAA compliance.
 """
 import logging
 from typing import Any, Dict, Optional
+from src.utils.phi_redactor import get_phi_redactor
 
 
 def log_call_event(
@@ -70,9 +73,10 @@ def log_transcription(
     call_sid: str,
     is_final: bool = True,
     confidence: Optional[float] = None,
+    redact_phi: bool = True,
     **extra_fields: Any
 ) -> None:
-    """Log a speech transcription event.
+    """Log a speech transcription event with automatic PHI redaction.
 
     Args:
         logger: Logger instance to use
@@ -80,8 +84,14 @@ def log_transcription(
         call_sid: Twilio call SID
         is_final: Whether this is a final transcription
         confidence: Confidence score (0.0-1.0)
+        redact_phi: Whether to redact PHI (default: True for HIPAA compliance)
         **extra_fields: Additional fields
     """
+    # Redact PHI from transcription text
+    if redact_phi:
+        redactor = get_phi_redactor()
+        text = redactor.redact(text, redact_level="partial")  # Partial to keep context
+
     level = logging.INFO if is_final else logging.DEBUG
     logger.log(
         level,
@@ -159,3 +169,57 @@ def log_error(
         extra=extra,
         exc_info=True
     )
+
+
+def log_message(
+    logger: logging.Logger,
+    message: str,
+    level: int = logging.INFO,
+    redact_phi: bool = True,
+    **extra_fields: Any
+) -> None:
+    """Log a message with automatic PHI redaction.
+
+    This is a general-purpose logging function that can be used
+    to replace print() statements throughout the codebase.
+
+    Args:
+        logger: Logger instance
+        message: Message to log
+        level: Log level (logging.DEBUG, INFO, WARNING, ERROR)
+        redact_phi: Whether to redact PHI (default: True for HIPAA compliance)
+        **extra_fields: Additional structured fields to include
+
+    Examples:
+        >>> log_message(logger, "User said: 'my phone is 555-1234'")
+        # Logs: "User said: 'my phone is XXX-XXX-1234'"
+
+        >>> log_message(logger, "Processing call", level=logging.DEBUG, call_sid="CA123")
+        # Logs with call_sid in structured fields
+    """
+    # Redact PHI from message
+    if redact_phi:
+        redactor = get_phi_redactor()
+        message = redactor.redact(message, redact_level="partial")
+
+    logger.log(
+        level,
+        message,
+        extra=extra_fields
+    )
+
+
+def redact_for_logging(text: str, level: str = "partial") -> str:
+    """Redact PHI from text for logging purposes.
+
+    Convenience function for manual PHI redaction when needed.
+
+    Args:
+        text: Text to redact
+        level: Redaction level ("full", "partial", "minimal")
+
+    Returns:
+        Redacted text
+    """
+    redactor = get_phi_redactor()
+    return redactor.redact(text, redact_level=level)

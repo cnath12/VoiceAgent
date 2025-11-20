@@ -1,6 +1,5 @@
 """Main voice conversation handler."""
-from typing import AsyncGenerator, List, Optional
-import json
+from typing import AsyncGenerator, Optional
 
 from pipecat.frames.frames import (
     Frame, TextFrame, StartFrame, TranscriptionFrame, InterimTranscriptionFrame,

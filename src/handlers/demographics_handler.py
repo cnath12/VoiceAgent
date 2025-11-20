@@ -1,6 +1,6 @@
 """Handler for collecting and validating demographics."""
 import re
-from typing import Optional, Dict
+from typing import Dict
 
 from src.core.models import ConversationState, Address, ConversationPhase
 from src.core.conversation_state import state_manager
@@ -129,7 +129,6 @@ class DemographicsHandler:
         
         if not state.patient_info.phone_number:
             # Permissive phone acceptance: require at least 7 digits to accept
-            import re
             digits = re.sub(r"\D", "", user_input)
             if len(digits) >= 10:
                 formatted = f"({digits[0:3]}) {digits[3:6]}-{digits[6:10]}"

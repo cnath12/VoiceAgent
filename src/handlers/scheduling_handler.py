@@ -112,7 +112,6 @@ class SchedulingHandler:
         
         # If no slots, propose next business day at 2 PM
         if not self._available_slots:
-            from datetime import datetime, timedelta
             next_day = datetime.now() + timedelta(days=1)
             proposed = next_day.replace(hour=14, minute=0, second=0, microsecond=0)
             display = proposed.strftime('%A, %B %d at %I:%M %p')
@@ -169,7 +168,6 @@ class SchedulingHandler:
         # 2) Parse explicit time/day and pick closest matching slot
         if not selected_slot and cleaned:
             import re
-            from datetime import datetime, timedelta
 
             # Extract explicit time and (optional) am/pm
             tm = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\b", lowered)

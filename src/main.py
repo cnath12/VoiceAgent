@@ -16,7 +16,6 @@ from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.deepgram.stt import DeepgramSTTService
 # ADD: Direct Deepgram client for STT (bypassing Pipecat issues)
 from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
-# Removed CartesiaTTSService - using DeepgramTTSService instead
 from pipecat.transports.network.fastapi_websocket import (
     FastAPIWebsocketTransport,
     FastAPIWebsocketParams,
@@ -102,10 +101,7 @@ async def create_pipeline(call_sid: str, transport: FastAPIWebsocketTransport) -
     logger.debug(f"Creating Deepgram STT service for call {call_sid}")
     logger.info(f"Creating Deepgram STT service for call {call_sid}")
     try:
-        from deepgram import LiveOptions
-        
         # Enable ALL debug logging for Deepgram
-        import logging
         deepgram_logger = logging.getLogger("pipecat.services.deepgram")
         deepgram_logger.setLevel(logging.DEBUG)
         
@@ -159,7 +155,6 @@ async def create_pipeline(call_sid: str, transport: FastAPIWebsocketTransport) -
     logger.info(f"Creating Deepgram TTS service for call {call_sid}")
     try:
         # Add debug logging for Deepgram TTS
-        import logging
         deepgram_logger = logging.getLogger("pipecat.services.deepgram")
         deepgram_logger.setLevel(logging.DEBUG)
 
@@ -226,10 +221,9 @@ async def create_pipeline(call_sid: str, transport: FastAPIWebsocketTransport) -
                 if debug_tts_process_frame._audio_count == 1:
                     logger.info(f"TTS generating first audio frame - speech synthesis working for call {call_sid}")
 
-            import time as _time
-            t0 = _time.time()
+            t0 = time.time()
             result = await original_process_frame(frame, direction)
-            t1 = _time.time()
+            t1 = time.time()
             logger.debug(f"TTS process_frame duration for {frame_type}: {(t1 - t0)*1000:.1f} ms for call {call_sid}")
             if frame_type == "TextFrame":
                 # measure time until BotStartedSpeaking arrives using a simple flag
@@ -249,7 +243,6 @@ async def create_pipeline(call_sid: str, transport: FastAPIWebsocketTransport) -
 
         # Give TTS service time to fully initialize internal queues
         logger.debug(f"Allowing TTS service to fully initialize for call {call_sid}")
-        import asyncio
         await asyncio.sleep(0.5)  # Reduce startup delay for faster greeting
 
         logger.info(f"DeepgramTTSService created and initialized for call {call_sid}")
@@ -278,9 +271,7 @@ async def create_pipeline(call_sid: str, transport: FastAPIWebsocketTransport) -
         raise
 
     # Optionally run echo test pipeline when diagnostics enabled
-    from src.config.settings import get_settings as _get_settings
-    _s = _get_settings()
-    if getattr(_s, 'echo_test', False):
+    if getattr(settings, 'echo_test', False):
         logger.info(f"TEST PIPELINE ENABLED: audio will echo back directly for call {call_sid}")
         pipeline = Pipeline([
             transport.input(),
@@ -525,7 +516,6 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
         logger.info(f"Transport ready (audio_in/out enabled) for {call_sid}")
 
         # Enable debug logging for transport and services
-        import logging
         logging.getLogger("pipecat.transports.network.fastapi_websocket").setLevel(logging.DEBUG)
         # Keep transport debug, but avoid excessive STT debug spam in production
         logging.getLogger("pipecat.services.deepgram.stt").setLevel(logging.DEBUG)

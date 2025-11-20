@@ -31,7 +31,16 @@ class Settings(BaseSettings):
     
     # USPS API
     usps_user_id: str = ""
-    
+
+    # Redis Configuration
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_db: int = 0
+    redis_password: str = ""
+    redis_ssl: bool = False
+    redis_url: str = ""  # Optional: full Redis URL (overrides individual settings)
+    use_redis: bool = False  # Enable Redis-backed state management
+
     # Application
     app_env: str = "development"
     log_level: str = "INFO"

@@ -17,3 +17,7 @@ pydantic-settings>=2.2.1
 aiohttp>=3.9
 httpx>=0.25
 deepgram-sdk>=3.0
+
+# State Management
+redis>=5.0.0
+hiredis>=2.2.0  # Faster Redis protocol parser

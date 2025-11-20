@@ -22,17 +22,17 @@ class InsuranceHandler:
     
     async def process_input(self, user_input: str, state: ConversationState) -> str:
         """Process insurance-related input."""
-        
-        print(f"🏥 INSURANCE HANDLER: Step={self._collection_step}, Input='{user_input}'")
-        
+
+        logger.debug(f"Insurance handler processing: step={self._collection_step}, input='{user_input}'")
+
         # Check for duplicate input (user might be repeating themselves)
         if user_input.strip().lower() == self._last_input.strip().lower():
-            print(f"⚠️ Duplicate input detected, processing anyway")
+            logger.debug("Duplicate input detected, processing anyway")
         self._last_input = user_input
-        
+
         # Check if we already have complete insurance info
         if state.patient_info.insurance and state.patient_info.insurance.member_id and state.patient_info.insurance.member_id != "":
-            print(f"✅ Insurance complete, moving to chief complaint")
+            logger.debug("Insurance information complete, transitioning to chief complaint phase")
             # Move to next phase
             await state_manager.transition_phase(
                 self.call_sid,
@@ -59,7 +59,7 @@ class InsuranceHandler:
         
         # If we've asked too many times, just accept whatever they say
         if self._retry_count > 2:
-            print(f"⚠️ Max retries reached, accepting input as-is: '{user_input}'")
+            logger.warning(f"Max retries reached for payer name, accepting input as-is: '{user_input}'")
             payer_found = user_input.strip()
             
             # Store and move on
@@ -114,7 +114,7 @@ class InsuranceHandler:
         for pattern, name in common_payers.items():
             if pattern in input_lower:
                 payer_found = name
-                print(f"✅ Recognized insurance: {payer_found}")
+                logger.debug(f"Recognized insurance provider: {payer_found}")
                 break
         
         # If not found, be more lenient
@@ -131,8 +131,7 @@ class InsuranceHandler:
                 non_answers = ["yes", "no", "ok", "okay", "sure", "what", "huh", "um", "uh"]
                 if cleaned_input not in non_answers and len(cleaned_input) >= 3:
                     payer_found = user_input.strip()  # Use original input
-                    print(f"⚠️ Accepting unrecognized but plausible insurance: {payer_found}")
-                    logger.warning(f"Unrecognized insurance payer: {payer_found}")
+                    logger.warning(f"Accepting unrecognized but plausible insurance payer: {payer_found}")
         
         if not payer_found:
             # Use LLM classifier against canonical labels
@@ -143,7 +142,7 @@ class InsuranceHandler:
                 result = await llm.classify_label(user_input, canonical_labels)
                 if result and result.get("payer") and result.get("payer") != "unknown":
                     payer_found = result["payer"]
-                    print(f"🤖 LLM mapped insurance to: {payer_found} (conf={result.get('confidence', 0.0)})")
+                    logger.debug(f"LLM mapped insurance to: {payer_found} (confidence={result.get('confidence', 0.0)})")
             except Exception as e:
                 logger.warning(f"LLM classify failed: {e}")
 
@@ -182,7 +181,7 @@ class InsuranceHandler:
             # Extract any alphanumeric sequence as member ID
             cleaned = re.sub(r'[^A-Z0-9]', '', user_input.upper())
             if len(cleaned) >= 4:  # At least 4 characters
-                print(f"⚠️ Max retries reached, accepting as member ID: {cleaned}")
+                logger.warning(f"Max retries reached for member ID, accepting: {cleaned}")
                 state.patient_info.insurance.member_id = cleaned
                 
                 # Update and transition
@@ -218,7 +217,7 @@ class InsuranceHandler:
             if matches:
                 cleaned = matches[0]  # Take the first match
                 valid = True
-                print(f"✅ Extracted member ID from input: {cleaned}")
+                logger.debug(f"Extracted member ID from input: {cleaned}")
         
         if not valid or not cleaned:
             return "I need your member ID number from your insurance card. It's usually a combination of letters and numbers."
@@ -291,8 +290,8 @@ class InsuranceHandler:
         
         # If we found both, store them
         if payer_found and member_id:
-            print(f"🎯 COMPLETE INSURANCE: Provider={payer_found}, ID={member_id}")
-            
+            logger.debug(f"Complete insurance information parsed: provider={payer_found}, member_id={member_id}")
+
             # Store insurance information
             state.patient_info.insurance = Insurance(
                 payer_name=payer_found,

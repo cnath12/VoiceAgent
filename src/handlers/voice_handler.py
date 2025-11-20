@@ -18,6 +18,7 @@ from src.handlers.symptom_handler import SymptomHandler
 from src.handlers.demographics_handler import DemographicsHandler
 from src.handlers.scheduling_handler import SchedulingHandler
 from src.utils.logger import get_logger
+from src.utils.structured_logging import log_transcription
 
 logger = get_logger(__name__)
 
@@ -72,7 +73,7 @@ class VoiceHandler(FrameProcessor):
             audio_data = getattr(frame, 'audio', b'')
             frame_info += f" audio_len={len(audio_data) if audio_data else 0}"
 
-        # Only print important events; skip AudioRawFrame/InputAudioRawFrame noise
+        # Only log important events; skip AudioRawFrame/InputAudioRawFrame noise
         important_frames = {
             "TextFrame",
             "TranscriptionFrame",
@@ -87,38 +88,38 @@ class VoiceHandler(FrameProcessor):
             "TTSStoppedFrame",
         }
         if frame_type in important_frames:
-            print(f"🔥 IMPORTANT FRAME: {frame_info} for {self.call_sid}")
+            logger.debug(f"Important frame: {frame_info} for {self.call_sid}")
         # Always keep a debug log line for diagnostics (respects logger level)
         logger.debug(f"VoiceHandler processing frame: {frame_info} for {self.call_sid}")
         
         # Handle StartFrame - MUST pass through first, then initialize
         if isinstance(frame, StartFrame):
-            print(f"🚀 VoiceHandler received StartFrame - processing and forwarding")
-            
+            logger.debug(f"VoiceHandler received StartFrame - processing and forwarding for {self.call_sid}")
+
             # Only process the FIRST StartFrame to avoid duplicate greetings
             if hasattr(self, '_start_frame_processed'):
-                print(f"⚠️ StartFrame already processed - skipping duplicate greeting")
+                logger.warning(f"StartFrame already processed - skipping duplicate greeting for {self.call_sid}")
                 await super().process_frame(frame, direction)
                 await self.push_frame(frame, direction)
                 return
-            
-            # Mark StartFrame as processed to prevent duplicates    
+
+            # Mark StartFrame as processed to prevent duplicates
             self._start_frame_processed = True
-            
+
             # Handle internal Pipecat state first
             await super().process_frame(frame, direction)
-            print(f"🔧 VoiceHandler internal state processed, now forwarding to TTS")
+            logger.debug(f"VoiceHandler internal state processed, now forwarding to TTS for {self.call_sid}")
             # CRITICAL: Explicitly forward to TTS service
             await self.push_frame(frame, direction)
-            print(f"✅ StartFrame forwarded to TTS service")
+            logger.debug(f"StartFrame forwarded to TTS service for {self.call_sid}")
 
             if not self._initialized:
                 self._initialized = True
                 logger.info(f"VoiceHandler initialized for {self.call_sid}")
                 
                 # DEEPGRAM TTS FIX: Send greeting immediately since DeepgramTTS doesn't send TTSStartedFrame
-                print(f"🎯 CONTINUOUS GREETING: Sending greeting + immediate insurance prompt")
-                
+                logger.info(f"Sending continuous greeting + immediate insurance prompt for {self.call_sid}")
+
                 # Greeting only (no question); ask insurance immediately after
                 part1 = "Hello! This is Assort Health, your AI appointment scheduler."
                 part2 = "I'm here to help you schedule your appointment today."
@@ -126,17 +127,17 @@ class VoiceHandler(FrameProcessor):
                     "insurance",
                     "To get started, could you please tell me your insurance provider name and your member ID number?"
                 )
-                
+
                 greeting = f"{part1} {part2}"
-                print(f"🗣️ Sending greeting (length: {len(greeting)} chars)")
-                print(f"🗣️ Greeting text: '{greeting}'")
+                logger.debug(f"Sending greeting (length: {len(greeting)} chars) for {self.call_sid}")
+                logger.debug(f"Greeting text: '{greeting}' for {self.call_sid}")
                 logger.info(f"Sending initial greeting to {self.call_sid}")
-                
+
                 # Create TextFrame with explicit handling
                 # Send greeting as two back-to-back TextFrames to avoid TTS truncation after 'Hello!'
                 greeting_frame1 = TextFrame(text=part1)
                 greeting_frame2 = TextFrame(text=part2)
-                print(f"🔥 Created greeting TextFrames: {greeting_frame1} | {greeting_frame2}")
+                logger.debug(f"Created greeting TextFrames for {self.call_sid}")
                 await self.push_frame(greeting_frame1, FrameDirection.DOWNSTREAM)
                 await self.push_frame(greeting_frame2, FrameDirection.DOWNSTREAM)
                 # Immediately ask for insurance as a separate statement
@@ -148,22 +149,22 @@ class VoiceHandler(FrameProcessor):
                 import time as _time
                 self._last_greeting_time = _time.time()
                 logger.debug(f"Greeting dispatched at {_time.strftime('%H:%M:%S')} for {self.call_sid}")
-                print(f"✅ Continuous greeting TextFrame sent to TTS service!")
+                logger.debug(f"Continuous greeting TextFrame sent to TTS service for {self.call_sid}")
                 # Mark that greeting just finished dispatch
                 self._sent_greeting = True
             return
         
         # Handle speech events
         elif isinstance(frame, TTSStartedFrame):
-            print(f"🔊 TTS STARTED FRAME received for {self.call_sid}")
+            logger.debug(f"TTS started frame received for {self.call_sid}")
             logger.info(f"TTS started frame received for {self.call_sid}")
-            
+
             # NO GREETING HERE - greeting already sent in StartFrame handler to prevent duplicates
-            print(f"🚫 Skipping TTSStartedFrame greeting - already sent in StartFrame handler")
+            logger.debug(f"Skipping TTSStartedFrame greeting - already sent in StartFrame handler for {self.call_sid}")
             await self.push_frame(frame, direction)
-            
+
         elif isinstance(frame, TTSStoppedFrame):
-            print(f"🛑 TTS STOPPED FRAME received for {self.call_sid}")
+            logger.debug(f"TTS stopped frame received for {self.call_sid}")
             logger.info(f"TTS stopped frame received for {self.call_sid}")
             await self.push_frame(frame, direction)
 
@@ -182,7 +183,7 @@ class VoiceHandler(FrameProcessor):
             try:
                 state = await state_manager.get_state(self.call_sid)
                 if state and state.phase == ConversationPhase.COMPLETED:
-                    print(f"📞 Ending call for {self.call_sid} after goodbye")
+                    logger.info(f"Ending call for {self.call_sid} after goodbye")
                     await self.push_frame(EndFrame(), FrameDirection.DOWNSTREAM)
             except Exception as _e:
                 logger.warning(f"Failed to end call after goodbye: {_e}")
@@ -200,30 +201,29 @@ class VoiceHandler(FrameProcessor):
         # Some STT implementations may deliver transcriptions in either direction.
         # Process final transcriptions regardless of direction to avoid missing user speech.
         elif isinstance(frame, TranscriptionFrame):
-            print(f"🎯 RECEIVED TRANSCRIPTION FRAME: text='{frame.text}' confidence={getattr(frame, 'confidence', 'N/A')}")
-            logger.info(f"Received TranscriptionFrame: '{frame.text}' for {self.call_sid}")
-            
+            confidence = getattr(frame, 'confidence', None)
+            logger.debug(f"Received TranscriptionFrame with confidence={confidence} for {self.call_sid}")
+
             # Ignore user input while the bot is speaking to prevent talk-over capture
             if self._bot_speaking:
-                logger.info(f"Ignoring user speech while bot is speaking for {self.call_sid}: '{frame.text}'")
+                logger.info(f"Ignoring user speech while bot is speaking for {self.call_sid}")
                 return
 
             if frame.text and frame.text.strip():
-                print(f"\n🗣️ ===== USER SAID: '{frame.text}' ===== (Final Transcription)")
-                logger.info(f"🗣️ USER TRANSCRIPTION: '{frame.text}' for {self.call_sid}")
-                logger.info(f"Processing transcription: '{frame.text}' for {self.call_sid}")
+                log_transcription(logger, frame.text, self.call_sid, is_final=True, confidence=confidence)
+                logger.info(f"Processing transcription for {self.call_sid}")
                 import asyncio as _asyncio
                 import time as _time
                 t_start = _time.time()
                 async for response_frame in self._handle_user_input(frame.text):
-                    print(f"🚀 Preparing to push response frame: {type(response_frame).__name__}")
+                    logger.debug(f"Preparing to push response frame: {type(response_frame).__name__} for {self.call_sid}")
                     # Warm up TTS on the very first TextFrame by ensuring a StartFrame reached it
                     if (
                         not self._tts_warmed_up
                         and isinstance(response_frame, TextFrame)
                     ):
                         try:
-                            print("🔊 Warming up TTS: sending downstream StartFrame before first TextFrame")
+                            logger.debug(f"Warming up TTS: sending downstream StartFrame before first TextFrame for {self.call_sid}")
                             await self.push_frame(StartFrame(), FrameDirection.DOWNSTREAM)
                             await _asyncio.sleep(0.15)
                             self._tts_warmed_up = True
@@ -244,7 +244,7 @@ class VoiceHandler(FrameProcessor):
                 t_end = _time.time()
                 logger.debug(f"End-to-end response generation latency: {(t_end - t_start)*1000:.1f} ms for {self.call_sid}")
             else:
-                print(f"⚠️ Received empty or whitespace-only TranscriptionFrame: '{frame.text}'")
+                logger.warning(f"Received empty or whitespace-only TranscriptionFrame for {self.call_sid}")
                 logger.warning(f"Empty TranscriptionFrame received for {self.call_sid}: '{frame.text}'")
             return  # Don't pass through the TranscriptionFrame
 
@@ -256,30 +256,30 @@ class VoiceHandler(FrameProcessor):
                 except Exception:
                     audio_len = -1
                 self._audio_received = True
-                print(f"🔊 AUDIO IS FLOWING! First audio frame received: {audio_len} bytes for {self.call_sid}")
+                logger.info(f"Audio is flowing - first audio frame received: {audio_len} bytes for {self.call_sid}")
                 logger.info(f"First audio frame received in VoiceHandler for {self.call_sid}: {audio_len} bytes")
         
         # Handle interim transcription frames (log but don't process)
         elif isinstance(frame, InterimTranscriptionFrame):
             if frame.text and frame.text.strip():
-                print(f"🎤 INTERIM TRANSCRIPTION: '{frame.text}' for {self.call_sid} (confidence: {getattr(frame, 'confidence', 'N/A')}) - NOT PROCESSED")
-                logger.info(f"Interim transcription received: '{frame.text}' for {self.call_sid}")
-                logger.debug(f"Interim transcription: '{frame.text}' for {self.call_sid}")
+                confidence = getattr(frame, 'confidence', None)
+                log_transcription(logger, frame.text, self.call_sid, is_final=False, confidence=confidence)
+                logger.debug(f"Interim transcription (not processed) for {self.call_sid}")
             return  # Don't pass through InterimTranscriptionFrame
-        
+
         # Handle connection end frames
         elif isinstance(frame, EndFrame):
-            print(f"🛑 EndFrame received for {self.call_sid} - cleaning up")
+            logger.info(f"EndFrame received for {self.call_sid} - cleaning up")
             logger.info(f"EndFrame received for {self.call_sid}, cleaning up")
-            
+
             # Cancel silence monitoring
             if self._silence_check_task:
                 self._silence_check_task.cancel()
                 self._silence_check_task = None
-                print(f"🔇 Silence monitoring cancelled for {self.call_sid}")
+                logger.debug(f"Silence monitoring cancelled for {self.call_sid}")
                 logger.info(f"Silence monitoring cancelled for {self.call_sid}")
             else:
-                print(f"⚠️ No silence task to cancel for {self.call_sid}")
+                logger.debug(f"No silence task to cancel for {self.call_sid}")
             
             # Call parent method
             await super().process_frame(frame, direction)
@@ -315,45 +315,45 @@ class VoiceHandler(FrameProcessor):
             # CHECK FOR REPETITION - Prevent asking same question multiple times
             if self._last_response == response_text:
                 self._response_count += 1
-                print(f"🚨 REPETITION WARNING: Same response #{self._response_count} - '{response_text[:50]}...'")
-                
+                logger.warning(f"Repetition warning: Same response #{self._response_count} for {self.call_sid}")
+
                 if self._response_count >= self._max_same_response:
                     # Escalate or provide alternative response
                     escalated_response = self._handle_repetition_escalation(response_text, state)
                     if escalated_response:
                         response_text = escalated_response
-                        print(f"🔄 ESCALATED RESPONSE: '{response_text[:50]}...'")
+                        logger.info(f"Escalated response for {self.call_sid}")
                         # Reset counter for new response
                         self._response_count = 0
                         self._last_response = response_text
                     else:
-                        print(f"🛑 BLOCKING REPETITION: Skipping identical response #{self._response_count}")
+                        logger.warning(f"Blocking repetition: Skipping identical response #{self._response_count} for {self.call_sid}")
                         return  # Skip sending the response
             else:
                 # New response, reset counter
                 self._response_count = 1
                 self._last_response = response_text
-                print(f"✅ NEW RESPONSE: '{response_text[:50]}...'")
-            
-            print(f"\n🤖 ===== AGENT RESPONDING: '{response_text}' =====")
+                logger.debug(f"New response for {self.call_sid}")
+
+            logger.info(f"Agent responding to {self.call_sid}")
             logger.info(f"Sending response: '{response_text[:50]}...' for {self.call_sid}")
             
             try:
-                print(f"🔥 Creating TextFrame(s) with response for TTS processing...")
+                logger.debug(f"Creating TextFrame(s) with response for TTS processing for {self.call_sid}")
                 # Split long responses into sentence-sized chunks to avoid TTS truncation
                 import re as _re
                 sentences = [_s.strip() for _s in _re.split(r"(?<=[.!?])\s+", response_text) if _s.strip()]
                 for _sent in sentences:
                     text_frame = TextFrame(text=_sent)
-                    print(f"🚀 Yielding TextFrame to pipeline: {text_frame}")
+                    logger.debug(f"Yielding TextFrame to pipeline for {self.call_sid}")
                     yield text_frame
                 # Add assistant response to transcript
                 state.add_transcript_entry("assistant", response_text)
-                print(f"✅ Successfully yielded TextFrame(s) for TTS conversion")
+                logger.debug(f"Successfully yielded TextFrame(s) for TTS conversion for {self.call_sid}")
                 logger.info(f"Successfully sent response for {self.call_sid}")
-                
+
             except Exception as e:
-                print(f"❌ FAILED to yield TextFrame: {e}")
+                logger.error(f"Failed to yield TextFrame for {self.call_sid}: {e}")
                 logger.error(f"Failed to send response for {self.call_sid}: {e}")
                 # Note: Don't yield fallback frames as they might cause the same error
     
@@ -383,7 +383,7 @@ class VoiceHandler(FrameProcessor):
         elif phase in self.phase_handlers:
             handler = self.phase_handlers[phase]
             handler_name = type(handler).__name__
-            print(f"🎯 ROUTING: Phase={phase}, Handler={handler_name}, Input='{user_input[:50]}...'")
+            logger.info(f"Routing to {handler_name} for phase {phase} in call {self.call_sid}")
             logger.info(f"Routing to {handler_name} for phase {phase}: '{user_input[:50]}...'")
             response = await handler.process_input(user_input, state)
             # If the handler advanced the phase to PROVIDER_SELECTION without emitting options,
@@ -397,7 +397,7 @@ class VoiceHandler(FrameProcessor):
                             response = await sched_handler.process_input("", new_state)
             except Exception as _e:
                 logger.debug(f"Auto-advance to provider options failed: {_e}")
-            print(f"🤖 HANDLER RESPONSE: {handler_name} -> '{response[:100]}...'")
+            logger.debug(f"Handler {handler_name} response generated for {self.call_sid}")
             return response
         
         # Handle confirmation phase

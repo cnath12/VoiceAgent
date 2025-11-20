@@ -29,6 +29,7 @@ from src.config.settings import get_settings
 from src.core.conversation_state import state_manager
 from src.handlers.voice_handler import VoiceHandler
 from src.utils.logger import get_logger
+from src.api.health import router as health_router
 import logging
 
 logger = get_logger(__name__)
@@ -55,6 +56,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# Include health check router
+app.include_router(health_router)
 
 
 def _is_production() -> bool:
@@ -705,12 +709,6 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
         await state_manager.cleanup_state(call_sid)
         print(f"🔌 MediaStream disconnected for {call_sid}")
         logger.info(f"MediaStream disconnected for {call_sid}")
-
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy", "service": "healthcare-voice-agent"}
 
 
 @app.get("/debug/state/{call_sid}")

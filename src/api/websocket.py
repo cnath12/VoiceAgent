@@ -22,6 +22,7 @@ from pipecat.serializers.twilio import TwilioFrameSerializer
 
 from src.config.settings import get_settings
 from src.core.conversation_state import state_manager
+from src.core.shutdown import register_runner, unregister_runner, is_shutting_down
 from src.utils.logger import get_logger
 from src.pipeline.factory import create_pipeline
 from src.utils.metrics import (
@@ -41,6 +42,12 @@ runner = None
 async def handle_media_stream(websocket: WebSocket, call_sid: str):
     """Handle Twilio MediaStream WebSocket connection."""
     logger.debug(f"WEBSOCKET DEBUG: Starting handler for {call_sid}")
+
+    # Reject new calls during shutdown
+    if is_shutting_down():
+        logger.warning(f"Rejecting new call {call_sid} - system is shutting down")
+        await websocket.close(code=1001, reason="Service shutting down")
+        return
 
     # Track active call and start timer
     active_calls.inc()
@@ -257,6 +264,7 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
 
         global runner
         runner = PipelineRunner()
+        register_runner(runner)  # Register for graceful shutdown tracking
         logger.info(f"Starting pipeline runner for call {call_sid}")
 
         # Let FastAPIWebsocketTransport consume all remaining messages
@@ -342,9 +350,14 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
 
             try:
                 await direct_dg_connection.finish()
-                logger.debug(f"Direct Deepgram connection closed for call {call_sid}")
+                logger.debug(f"Direct Deepgram connection closed for {call_sid}")
             except Exception as e:
                 logger.warning(f"Deepgram cleanup error for call {call_sid}: {e}")
+
+            # Unregister runner from shutdown tracking
+            if runner:
+                unregister_runner(runner)
+                logger.debug(f"Unregistered pipeline runner for graceful shutdown tracking for call {call_sid}")
 
     except Exception as e:
         logger.error(f"Error in media stream for {call_sid}: {e}")

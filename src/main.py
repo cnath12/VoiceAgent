@@ -7,6 +7,7 @@ from pipecat.pipeline.runner import PipelineRunner
 
 from src.config.settings import get_settings
 from src.core.conversation_state import state_manager
+from src.core.shutdown import init_shutdown_handler, shutdown
 from src.utils.logger import get_logger
 from src.api.health import router as health_router
 from src.api.metrics import router as metrics_router
@@ -26,18 +27,18 @@ runner: Optional[PipelineRunner] = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage application lifecycle."""
+    """Manage application lifecycle with graceful shutdown."""
+    # Startup
     logger.info("Starting healthcare voice agent...")
+    init_shutdown_handler()
+    logger.info("Application started successfully")
+
     yield
-    logger.info("Shutting down healthcare voice agent...")
-    if runner:
-        try:
-            stop = getattr(runner, "stop", None)
-            if callable(stop):
-                await stop()
-        except Exception:
-            # Runner is already finished or stop() is unavailable
-            pass
+
+    # Shutdown
+    logger.info("Initiating graceful shutdown...")
+    await shutdown()
+    logger.info("Application shutdown complete")
 
 
 app = FastAPI(lifespan=lifespan)

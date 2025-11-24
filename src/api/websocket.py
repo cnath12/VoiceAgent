@@ -14,7 +14,7 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
 from pipecat.frames.frames import StartFrame, EndFrame, TranscriptionFrame
 from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
-from pipecat.transports.network.fastapi_websocket import (
+from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
     FastAPIWebsocketParams,
 )
@@ -197,7 +197,7 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
         logger.info(f"Transport ready (audio_in/out enabled) for {call_sid}")
 
         # Enable debug logging for transport and services
-        logging.getLogger("pipecat.transports.network.fastapi_websocket").setLevel(logging.DEBUG)
+        logging.getLogger("pipecat.transports.websocket.fastapi").setLevel(logging.DEBUG)
         # Keep transport debug, but avoid excessive STT debug spam in production
         logging.getLogger("pipecat.services.deepgram.stt").setLevel(logging.DEBUG)
         logger.debug(f"FastAPIWebsocketTransport debug enabled; Deepgram STT set to DEBUG (temporary) for call {call_sid}")

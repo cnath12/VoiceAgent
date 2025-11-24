@@ -9,8 +9,8 @@ from pipecat.frames.frames import (
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 
-from src.core.conversation_state import state_manager, ConversationPhase
-from src.core.models import ConversationState
+from src.core.conversation_state import state_manager
+from src.core.models import ConversationState, ConversationPhase
 from src.config.prompts import SYSTEM_PROMPT, PHASE_PROMPTS, ERROR_PROMPTS
 from src.handlers.insurance_handler import InsuranceHandler
 from src.handlers.symptom_handler import SymptomHandler

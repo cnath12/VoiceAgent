@@ -11,7 +11,7 @@ from deepgram import LiveOptions
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
-from pipecat.transports.network.fastapi_websocket import FastAPIWebsocketTransport
+from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport
 
 from src.config.settings import get_settings
 from src.core.conversation_state import state_manager

@@ -1,12 +1,12 @@
-# VoiceAgent - Interview Cheat Sheet
+# VoiceAgent - Quick Reference
 
-Quick reference for explaining the healthcare voice AI system in interviews.
+Quick reference for the healthcare voice AI system.
 
 ---
 
-## 30-Second Pitch
+## 30-Second Summary
 
-"Production-ready healthcare voice AI that conducts patient intake over the phone. Built with FastAPI, Deepgram for speech, GPT-4 for intelligence. Handles real-time audio streaming via Twilio WebSocket. Redis for horizontal scaling. HIPAA-compliant with PHI redaction. 35+ Prometheus metrics for observability. Graceful shutdown for zero-downtime deployments."
+Production-ready healthcare voice AI that conducts patient intake over the phone. Built with FastAPI, Deepgram for speech, GPT-4 for intelligence. Handles real-time audio streaming via Twilio WebSocket. Redis for horizontal scaling. HIPAA-compliant with PHI redaction. 35+ Prometheus metrics for observability. Graceful shutdown for zero-downtime deployments.
 
 ---
 
@@ -26,7 +26,7 @@ Quick reference for explaining the healthcare voice AI system in interviews.
 
 ---
 
-## System Flow (1 Minute)
+## System Flow
 
 ```
 Patient calls Twilio number
@@ -74,36 +74,36 @@ Call completes → Send email summary
 ## Key Architectural Decisions
 
 ### 1. Hybrid STT Approach
-**Problem:** Pipecat STT unreliable
-**Solution:** Direct Deepgram WebSocket + inject transcriptions into Pipecat
+**Problem:** Pipecat STT unreliable  
+**Solution:** Direct Deepgram WebSocket + inject transcriptions into Pipecat  
 **Trade-off:** Complexity vs. reliability
 
 ### 2. Redis State Management
-**Problem:** In-memory prevents scaling
-**Solution:** Redis with abstract interface + fallback
+**Problem:** In-memory prevents scaling  
+**Solution:** Redis with abstract interface + fallback  
 **Trade-off:** Infrastructure cost vs. horizontal scaling
 
 ### 3. Modular Architecture
-**Problem:** 755-line monolithic main.py
-**Solution:** Extracted 4 focused modules (83% reduction)
+**Problem:** 755-line monolithic main.py  
+**Solution:** Extracted 4 focused modules (83% reduction)  
 **Trade-off:** More files vs. maintainability
 
 ### 4. Graceful Shutdown
-**Problem:** Calls dropped on deployment
-**Solution:** SIGTERM handling + 30s timeout for active calls
+**Problem:** Calls dropped on deployment  
+**Solution:** SIGTERM handling + 30s timeout for active calls  
 **Trade-off:** Slower deployments vs. zero-downtime
 
 ### 5. Prometheus Monitoring
-**Problem:** No production observability
-**Solution:** 35+ metrics across 5 categories
+**Problem:** No production observability  
+**Solution:** 35+ metrics across 5 categories  
 **Trade-off:** 5% overhead vs. visibility
 
 ---
 
-## Production Improvements (What I Built)
+## Production Features
 
-| Improvement | Before | After | Impact |
-|-------------|--------|-------|--------|
+| Feature | Before | After | Impact |
+|---------|--------|-------|--------|
 | **Logging** | 155 print() | Structured logging | HIPAA compliance, log aggregation |
 | **PHI Redaction** | Plaintext logs | Auto-redaction | HIPAA compliance |
 | **State Management** | In-memory | Redis | Horizontal scaling |
@@ -140,13 +140,13 @@ Call completes → Send email summary
 
 ## Security & HIPAA
 
-✅ PHI automatically redacted from logs (30+ tests)
-✅ TLS 1.3 everywhere (WSS, HTTPS, STARTTLS)
-✅ Twilio signature validation
-✅ Redis encryption at rest
-✅ Admin endpoints require API key
-✅ 1-hour TTL on Redis state (auto cleanup)
-✅ Structured logs for audit trail
+✅ PHI automatically redacted from logs (30+ tests)  
+✅ TLS 1.3 everywhere (WSS, HTTPS, STARTTLS)  
+✅ Twilio signature validation  
+✅ Redis encryption at rest  
+✅ Admin endpoints require API key  
+✅ 1-hour TTL on Redis state (auto cleanup)  
+✅ Structured logs for audit trail  
 ✅ Security scanning in CI/CD
 
 **PHI Collected:**
@@ -182,82 +182,6 @@ Call completes → Send email summary
 
 ---
 
-## Challenges Solved
-
-### Challenge 1: Pipecat STT Unreliable
-**Solution:** Hybrid approach - direct Deepgram WebSocket + inject transcriptions
-
-### Challenge 2: TTS Audio Caching
-**Solution:** Aggressive anti-caching headers + force_close connections
-
-### Challenge 3: 755-Line Monolith
-**Solution:** Modular refactoring (4 focused modules, 83% reduction)
-
-### Challenge 4: No Horizontal Scaling
-**Solution:** Redis state management with fallback
-
-### Challenge 5: No Production Observability
-**Solution:** 35+ Prometheus metrics + Grafana dashboards
-
----
-
-## Interview Questions & Answers
-
-### "Walk me through the architecture"
-See [System Flow](#system-flow-1-minute) above + mention:
-- Real-time audio streaming (WebSocket)
-- Hybrid STT (direct Deepgram)
-- 10-phase state machine
-- Redis for state (scaling)
-- Prometheus for monitoring
-
-### "How does it scale?"
-- Stateless application (state in Redis)
-- Horizontal scaling with Kubernetes
-- Session affinity (sticky sessions by call_sid)
-- Redis Cluster for HA
-- Auto-scaling based on active_calls metric
-
-### "How do you handle HIPAA compliance?"
-- Automatic PHI redaction in all logs
-- TLS everywhere (WSS, HTTPS, STARTTLS)
-- 1-hour TTL on Redis state
-- Audit trail with redacted logs
-- No PHI in URLs/query params
-- Security scanning in CI/CD
-
-### "What's the most complex technical challenge?"
-"Hybrid STT approach. Pipecat's STT was unreliable, so I implemented a direct Deepgram WebSocket connection that forwards audio from Twilio, then injects transcriptions back into the Pipecat pipeline. This required understanding both Pipecat's frame-based architecture and Deepgram's WebSocket protocol. Trade-off was complexity vs. reliability - I chose reliability."
-
-### "How do you monitor the system in production?"
-"35+ Prometheus metrics across 5 categories: call metrics (active calls, duration, status), pipeline metrics (latency, errors), state management (Redis health, operation latency), external services (Deepgram/OpenAI latency), and business metrics (insurance providers, symptoms). Grafana dashboards for visualization. Alert rules for critical issues like high error rates or Redis down."
-
-### "How do you handle deployments?"
-"Graceful shutdown with 30-second timeout. On SIGTERM, we stop accepting new calls, wait for active calls to complete (up to 30s), then force shutdown. This enables zero-downtime rolling deployments in Kubernetes. Kubernetes health checks prevent new traffic during shutdown."
-
-### "What would you improve next?"
-**Short-term:** Type hints (mypy strict), circuit breakers, rate limiting
-**Medium-term:** A/B testing, multi-language, conversation analytics
-**Long-term:** EHR integration (HL7/FHIR), sentiment analysis, voice biometrics
-
----
-
-## Key Numbers to Remember
-
-- **155** print statements → structured logging
-- **755** lines → **125** lines (83% reduction)
-- **72+** tests (from 1 test file)
-- **35+** Prometheus metrics
-- **10** conversation phases
-- **50-100** concurrent calls per instance
-- **<300ms** STT latency
-- **~$0.10** per minute cost
-- **30s** graceful shutdown timeout
-- **1 hour** Redis TTL
-- **30+** PHI redaction tests
-
----
-
 ## Module Breakdown
 
 ```
@@ -272,10 +196,10 @@ src/
 │   └── factory.py (276 lines)    # Pipeline creation (STT/TTS)
 ├── core/
 │   ├── models.py                 # Pydantic models
-│   ├── state_manager_base.py    # Abstract interface
-│   ├── redis_state_manager.py   # Redis implementation
-│   ├── memory_state_manager.py  # In-memory fallback
-│   ├── state_manager_factory.py # Factory pattern
+│   ├── state_manager_base.py     # Abstract interface
+│   ├── redis_state_manager.py    # Redis implementation
+│   ├── memory_state_manager.py   # In-memory fallback
+│   ├── state_manager_factory.py  # Factory pattern
 │   └── shutdown.py               # Graceful shutdown
 ├── handlers/
 │   ├── voice_handler.py          # Main business logic (10 phases)
@@ -295,14 +219,19 @@ src/
 
 ---
 
-## Quick Stats
+## Key Numbers
 
-**Files:** ~30 Python files
-**Lines of Code:** ~5,000 (excluding tests/docs)
-**Test Coverage:** 50%+ target
-**Documentation:** 4 comprehensive docs (ARCHITECTURE, METRICS, PHI, REDIS)
-**Commits:** 10+ production-ready commits
-**Production Ready:** ✅ Yes
+- **155** print statements → structured logging
+- **755** lines → **125** lines (83% reduction)
+- **72+** tests (from 1 test file)
+- **35+** Prometheus metrics
+- **10** conversation phases
+- **50-100** concurrent calls per instance
+- **<300ms** STT latency
+- **~$0.10** per minute cost
+- **30s** graceful shutdown timeout
+- **1 hour** Redis TTL
+- **30+** PHI redaction tests
 
 ---
 
@@ -339,50 +268,32 @@ src/
 
 ---
 
-## Final Checklist for Interview
+## Quick Commands
 
-✅ Can explain system in 30 seconds
-✅ Can explain system in 2 minutes
-✅ Can explain system in 10 minutes
-✅ Know all technology choices and why
-✅ Know all architectural decisions and trade-offs
-✅ Know performance characteristics
-✅ Know scaling approach
-✅ Know security/HIPAA measures
-✅ Know monitoring strategy
-✅ Know biggest challenges and solutions
-✅ Know what I'd improve next
-✅ Prepared for deep technical questions
+```bash
+# Start development server
+uvicorn src.main:app --reload
 
----
+# Run tests
+pytest
 
-## Interview Confidence Boosters
+# Run with coverage
+pytest --cov=src --cov-report=html
 
-**You built a production-ready system that:**
-- Handles real-time audio streaming
-- Scales horizontally with Redis
-- Is HIPAA compliant with PHI redaction
-- Has comprehensive observability (35+ metrics)
-- Supports zero-downtime deployments
-- Has 72+ automated tests
-- Is well-architected (modular, maintainable)
-- Demonstrates senior-level engineering
+# Build Docker image
+docker build -f deployment/Dockerfile -t voiceagent .
 
-**You solved hard problems:**
-- Pipecat STT reliability (hybrid approach)
-- TTS caching (anti-cache headers)
-- Horizontal scaling (Redis state)
-- Production observability (Prometheus)
-- HIPAA compliance (PHI redaction)
+# Run with Docker
+docker run -p 8000:8000 --env-file .env voiceagent
 
-**You made good trade-offs:**
-- Complexity vs. reliability (chose reliability)
-- Cost vs. scalability (chose scalability)
-- Performance vs. observability (chose observability)
-- Simplicity vs. maintainability (chose maintainability)
+# Health check
+curl http://localhost:8000/health
+
+# Detailed health check
+curl http://localhost:8000/health/detailed
+```
 
 ---
 
-**Remember:** This is a production-grade system. You didn't just build a prototype - you built something that's ready for real patients, real scale, and real compliance requirements. That demonstrates senior-level thinking.
+*Last Updated: November 2025*
 
-Good luck with your interview! 🚀

@@ -279,13 +279,22 @@ class InsuranceHandler:
         member_id = None
         patterns = [
             r'(?:member\s*id|id\s*number|id\s*is|number\s*is)[\s:]*([A-Z0-9]+)',
-            r'([A-Z0-9]{6,})',  # Any 6+ character alphanumeric
+            # More specific pattern: alphanumeric sequence that's not a common word
+            r'\b([A-Z0-9]{5,}(?:[-\s]?[A-Z0-9]+)*)\b',  # Match alphanumeric sequences, avoid words
         ]
         
+        # Common words to exclude from member ID matching
+        exclude_words = {'INSURANCE', 'BLUE', 'CROSS', 'SHIELD', 'HEALTHCARE', 'HEALTH', 'CARE'}
+        
         for pattern in patterns:
-            match = re.search(pattern, user_input.upper())
-            if match:
-                member_id = match.group(1)
+            matches = re.finditer(pattern, user_input.upper())
+            for match in matches:
+                candidate = match.group(1).replace(' ', '').replace('-', '')
+                # Skip if it's a common word
+                if candidate not in exclude_words and len(candidate) >= 5:
+                    member_id = candidate
+                    break
+            if member_id:
                 break
         
         # If we found both, store them

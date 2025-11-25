@@ -73,50 +73,32 @@ class Settings(BaseSettings):
     @classmethod
     def check_test_mode(cls, data):
         """Check if we're in test mode to apply lenient validation."""
-        # Check app_env from data or environment
-        app_env = None
-        if isinstance(data, dict):
-            app_env = data.get('app_env') or data.get('APP_ENV')
-        if not app_env:
-            app_env = os.getenv('APP_ENV', 'development').lower()
-        
-        # Store in data for use in validators
-        if isinstance(data, dict):
-            data['_is_test_mode'] = app_env in ('testing', 'test')
+        # Remove any temporary fields we might have added
+        if isinstance(data, dict) and '_is_test_mode' in data:
+            del data['_is_test_mode']
         return data
 
     @field_validator("twilio_account_sid")
     @classmethod
     def validate_twilio_account_sid(cls, v: str, info) -> str:
         """Validate Twilio Account SID format."""
-        # Check if we're in test mode
-        is_test = getattr(info.data, '_is_test_mode', False) if hasattr(info, 'data') else False
-        if not is_test:
-            # Check from app_env in the model instance if available
-            if hasattr(info, 'data') and hasattr(info.data, 'app_env'):
-                is_test = info.data.app_env.lower() in ('testing', 'test')
-            else:
-                # Fallback to environment variable
-                is_test = os.getenv('APP_ENV', '').lower() in ('testing', 'test')
+        # Check if we're in test mode from environment variable
+        is_test = os.getenv('APP_ENV', '').lower() in ('testing', 'test')
         
         if not is_test:
             if len(v) < 30:
                 raise ValueError("Twilio Account SID must be at least 30 characters")
             if not v.startswith("AC"):
                 raise ValueError("Twilio Account SID must start with 'AC'")
-        elif not v.startswith("AC") and not v.startswith("test"):
-            # In test mode, allow "test_*" or "AC*" format
-            pass
+        # In test mode, allow any format (including "test_*")
         return v
 
     @field_validator("twilio_phone_number")
     @classmethod
     def validate_phone_number(cls, v: str, info) -> str:
         """Validate phone number format."""
-        # Check if we're in test mode
+        # Check if we're in test mode from environment variable
         is_test = os.getenv('APP_ENV', '').lower() in ('testing', 'test')
-        if hasattr(info, 'data') and hasattr(info.data, 'app_env'):
-            is_test = info.data.app_env.lower() in ('testing', 'test')
         
         # Remove common formatting
         cleaned = re.sub(r"[\s\-\(\)]+", "", v)

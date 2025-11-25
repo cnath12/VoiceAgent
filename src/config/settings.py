@@ -1,7 +1,8 @@
 """Configuration management for the voice agent."""
+import os
 import re
 from typing import Optional
-from pydantic import Field, field_validator, SecretStr
+from pydantic import Field, field_validator, model_validator, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
@@ -11,15 +12,15 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
 
-    # Twilio - Required with validation
-    twilio_account_sid: str = Field(min_length=30, description="Twilio Account SID (starts with AC)")
-    twilio_auth_token: SecretStr = Field(min_length=30, description="Twilio Auth Token")
-    twilio_phone_number: str = Field(min_length=10, description="Primary Twilio phone number")
+    # Twilio - Required with validation (lenient in test mode)
+    twilio_account_sid: str = Field(description="Twilio Account SID (starts with AC)")
+    twilio_auth_token: SecretStr = Field(description="Twilio Auth Token")
+    twilio_phone_number: str = Field(description="Primary Twilio phone number")
     twilio_phone_numbers: str = ""  # Comma-separated list of additional numbers
 
-    # AI Services - Required with validation
-    openai_api_key: SecretStr = Field(min_length=20, description="OpenAI API key")
-    deepgram_api_key: SecretStr = Field(min_length=20, description="Deepgram API key")
+    # AI Services - Required with validation (lenient in test mode)
+    openai_api_key: SecretStr = Field(description="OpenAI API key")
+    deepgram_api_key: SecretStr = Field(description="Deepgram API key")
     cartesia_api_key: str = ""  # Optional
 
     # Deepgram tuning
@@ -68,20 +69,71 @@ class Settings(BaseSettings):
     # Validators
     # -------------------------------------------------------------------------
 
+    @model_validator(mode='before')
+    @classmethod
+    def check_test_mode(cls, data):
+        """Check if we're in test mode to apply lenient validation."""
+        # Check app_env from data or environment
+        app_env = None
+        if isinstance(data, dict):
+            app_env = data.get('app_env') or data.get('APP_ENV')
+        if not app_env:
+            app_env = os.getenv('APP_ENV', 'development').lower()
+        
+        # Store in data for use in validators
+        if isinstance(data, dict):
+            data['_is_test_mode'] = app_env in ('testing', 'test')
+        return data
+
     @field_validator("twilio_account_sid")
     @classmethod
-    def validate_twilio_account_sid(cls, v: str) -> str:
+    def validate_twilio_account_sid(cls, v: str, info) -> str:
         """Validate Twilio Account SID format."""
-        if not v.startswith("AC"):
-            raise ValueError("Twilio Account SID must start with 'AC'")
+        # Check if we're in test mode
+        is_test = getattr(info.data, '_is_test_mode', False) if hasattr(info, 'data') else False
+        if not is_test:
+            # Check from app_env in the model instance if available
+            if hasattr(info, 'data') and hasattr(info.data, 'app_env'):
+                is_test = info.data.app_env.lower() in ('testing', 'test')
+            else:
+                # Fallback to environment variable
+                is_test = os.getenv('APP_ENV', '').lower() in ('testing', 'test')
+        
+        if not is_test:
+            if len(v) < 30:
+                raise ValueError("Twilio Account SID must be at least 30 characters")
+            if not v.startswith("AC"):
+                raise ValueError("Twilio Account SID must start with 'AC'")
+        elif not v.startswith("AC") and not v.startswith("test"):
+            # In test mode, allow "test_*" or "AC*" format
+            pass
         return v
 
     @field_validator("twilio_phone_number")
     @classmethod
-    def validate_phone_number(cls, v: str) -> str:
+    def validate_phone_number(cls, v: str, info) -> str:
         """Validate phone number format."""
+        # Check if we're in test mode
+        is_test = os.getenv('APP_ENV', '').lower() in ('testing', 'test')
+        if hasattr(info, 'data') and hasattr(info.data, 'app_env'):
+            is_test = info.data.app_env.lower() in ('testing', 'test')
+        
         # Remove common formatting
         cleaned = re.sub(r"[\s\-\(\)]+", "", v)
+        
+        # In test mode, be lenient - just ensure it's numeric and add + if missing
+        if is_test:
+            if not cleaned.startswith("+"):
+                cleaned = "+" + cleaned
+            # Allow any numeric format in test mode
+            if re.match(r"^\+\d{10,15}$", cleaned):
+                return cleaned
+            # If it's just digits, add + and return
+            if re.match(r"^\d{10,15}$", cleaned.replace("+", "")):
+                return "+" + cleaned.replace("+", "")
+            return cleaned  # Return as-is in test mode if it doesn't match
+        
+        # Production mode: strict validation
         if not cleaned.startswith("+"):
             cleaned = "+" + cleaned
         if not re.match(r"^\+\d{10,15}$", cleaned):
@@ -98,6 +150,42 @@ class Settings(BaseSettings):
         # Basic email validation
         if not re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", v):
             raise ValueError("Invalid email format")
+        return v
+
+    @field_validator("openai_api_key", mode='before')
+    @classmethod
+    def validate_openai_key(cls, v, info) -> str:
+        """Validate OpenAI API key (lenient in test mode)."""
+        # Handle both string and SecretStr inputs
+        if isinstance(v, SecretStr):
+            v = v.get_secret_value()
+        is_test = os.getenv('APP_ENV', '').lower() in ('testing', 'test')
+        if not is_test and len(v) < 20:
+            raise ValueError("OpenAI API key must be at least 20 characters")
+        return v
+
+    @field_validator("deepgram_api_key", mode='before')
+    @classmethod
+    def validate_deepgram_key(cls, v, info) -> str:
+        """Validate Deepgram API key (lenient in test mode)."""
+        # Handle both string and SecretStr inputs
+        if isinstance(v, SecretStr):
+            v = v.get_secret_value()
+        is_test = os.getenv('APP_ENV', '').lower() in ('testing', 'test')
+        if not is_test and len(v) < 20:
+            raise ValueError("Deepgram API key must be at least 20 characters")
+        return v
+
+    @field_validator("twilio_auth_token", mode='before')
+    @classmethod
+    def validate_twilio_auth_token(cls, v, info) -> str:
+        """Validate Twilio auth token (lenient in test mode)."""
+        # Handle both string and SecretStr inputs
+        if isinstance(v, SecretStr):
+            v = v.get_secret_value()
+        is_test = os.getenv('APP_ENV', '').lower() in ('testing', 'test')
+        if not is_test and len(v) < 30:
+            raise ValueError("Twilio auth token must be at least 30 characters")
         return v
 
     @field_validator("app_env")

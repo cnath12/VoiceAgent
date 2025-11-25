@@ -35,14 +35,7 @@ address_service = AddressService()
 
 # Override notification emails for testing
 TEST_EMAIL = "chirag12084@gmail.com"
-PRODUCTION_EMAILS = [
-    "jeff@assorthealth.com", 
-    "connor@assorthealth.com", 
-    "cole@assorthealth.com",
-    "jciminelli@assorthealth.com", 
-    "akumar@assorthealth.com", 
-    "riley@assorthealth.com"
-]
+PRODUCTION_EMAILS = []  # Configure via environment variables
 
 @app.get("/health")
 async def health():
@@ -78,7 +71,7 @@ async def voice_answer(request: Request):
     
     twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">Hello! Thank you for calling Assort Health. I'm your AI assistant and I'll help you schedule your appointment today.</Say>
+    <Say voice="alice">Hello! Thank you for calling. I'm your AI assistant and I'll help you schedule your appointment today.</Say>
     <Connect>
         <Stream url="wss://{ngrok_host}/voice/stream/{call_sid}" />
     </Connect>
@@ -199,7 +192,7 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
             
             # Add phase-specific instructions - UPDATED FOR BETTER FLOW
             phase_prompts_updated = {
-                "greeting": "Hello! I'm your Assort Health assistant. Are you experiencing a medical emergency?",
+                "greeting": "Hello! I'm your AI scheduling assistant. Are you experiencing a medical emergency?",
                 "emergency_check": "Great! Let's schedule your appointment. What's your insurance provider and member ID?",
                 "insurance": "Could you please provide your insurance provider name and member ID number?", 
                 "chief_complaint": "What's the main reason you'd like to see a doctor today?",

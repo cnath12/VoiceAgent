@@ -84,7 +84,7 @@ class TTSCacheTestRunner:
         """Run all TTS caching isolation tests."""
         
         test_texts = [
-            "Hello! This is Assort Health, your AI appointment scheduler.",
+            "Hello! Welcome to our AI appointment scheduling service.",
             "I'll need to collect your insurance information.",
             "Could you please tell me your insurance provider name?",
             "Thank you. I have Cigna as your insurance provider.",

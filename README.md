@@ -153,11 +153,7 @@ git commit -m "Initial commit: Healthcare Voice Agent"
 
 1. Go to GitHub
 2. Create new private repository named `voice-healthcare-agent`
-3. Add collaborators:
-   - jeffery300
-   - connor@assorthealth.com
-   - cole@assorthealth.com
-   - jciminelli@assorthealth.com
+3. Add collaborators as needed
 
 #### 3. Push to GitHub
 
@@ -273,6 +269,6 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 For questions about this implementation, please contact [YOUR_EMAIL]
 
-Built with ❤️ for Assort Health
+Built with ❤️
 
 

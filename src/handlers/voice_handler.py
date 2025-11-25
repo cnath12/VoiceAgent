@@ -120,7 +120,7 @@ class VoiceHandler(FrameProcessor):
                 logger.info(f"Sending continuous greeting + immediate insurance prompt for {self.call_sid}")
 
                 # Greeting only (no question); ask insurance immediately after
-                part1 = "Hello! This is Assort Health, your AI appointment scheduler."
+                part1 = "Hello! Welcome to our AI appointment scheduling service."
                 part2 = "I'm here to help you schedule your appointment today."
                 insurance_prompt = PHASE_PROMPTS.get(
                     "insurance",

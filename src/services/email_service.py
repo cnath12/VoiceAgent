@@ -47,7 +47,7 @@ class EmailService:
     async def _send_patient_confirmation(self, state: ConversationState):
         """Send confirmation email to patient."""
         
-        subject = "Appointment Confirmation - Assort Health"
+        subject = "Appointment Confirmation"
         
         # Format appointment time
         appt_time = state.patient_info.appointment_datetime
@@ -85,7 +85,7 @@ class EmailService:
             <p>We look forward to seeing you!</p>
             
             <p>Best regards,<br>
-            Assort Health Team</p>
+            The Scheduling Team</p>
         </body>
         </html>
         """

@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     echo_test: bool = False
     
     # Notification Recipients (comma-separated in env)
-    notification_emails_str: str = "jeff@assorthealth.com,connor@assorthealth.com,cole@assorthealth.com,jciminelli@assorthealth.com,akumar@assorthealth.com,riley@assorthealth.com"
+    notification_emails_str: str = ""  # Configure via NOTIFICATION_EMAILS_STR env variable
     # Test environment recipient override
     test_notification_email: str = "chirag12084@gmail.com"
     @property

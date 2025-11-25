@@ -1,12 +1,14 @@
 """Configuration management for the voice agent."""
 import os
 from pathlib import Path
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 
 
 class Settings(BaseSettings):
     """Application settings."""
+    
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
     
     # Twilio
     twilio_account_sid: str
@@ -81,10 +83,6 @@ class Settings(BaseSettings):
                 deduped.append(n)
                 seen.add(n)
         return deduped
-    
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
 
 
 @lru_cache()

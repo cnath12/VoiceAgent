@@ -35,8 +35,14 @@ class TestSettings:
             'TWILIO_PHONE_NUMBER': '+15555555555',
             'OPENAI_API_KEY': 'test_openai',
             'DEEPGRAM_API_KEY': 'test_deepgram'
-        }):
+        }, clear=True):
+            # Clear APP_ENV if it was set by pytest
+            if 'APP_ENV' in os.environ:
+                del os.environ['APP_ENV']
             from src.config.settings import Settings
+            # Clear cache to get fresh settings
+            from src.config.settings import get_settings
+            get_settings.cache_clear()
 
             settings = Settings()
 

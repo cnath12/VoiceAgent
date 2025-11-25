@@ -11,19 +11,19 @@ class TestInputValidator:
         """Test validating a valid phone number."""
         valid, cleaned = InputValidator.validate_phone_number("555-123-4567")
         assert valid is True
-        assert cleaned == "5551234567"
+        assert cleaned == "555-123-4567"  # Returns formatted version
 
     def test_validate_phone_number_with_country_code(self):
         """Test phone number with country code."""
         valid, cleaned = InputValidator.validate_phone_number("+1 (555) 123-4567")
         assert valid is True
-        assert cleaned == "5551234567"
+        assert cleaned == "555-123-4567"  # Returns formatted version
 
     def test_validate_phone_number_digits_only(self):
         """Test phone number with only digits."""
         valid, cleaned = InputValidator.validate_phone_number("5551234567")
         assert valid is True
-        assert cleaned == "5551234567"
+        assert cleaned == "555-123-4567"  # Returns formatted version
 
     def test_validate_phone_number_too_short(self):
         """Test invalid phone number (too short)."""

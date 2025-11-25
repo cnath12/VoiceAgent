@@ -60,11 +60,12 @@ class StateManagerFactory:
                     decode_responses=False  # We handle JSON encoding/decoding
                 )
             else:
+                redis_password = settings.get_redis_password()
                 redis_client = Redis(
                     host=settings.redis_host,
                     port=settings.redis_port,
                     db=settings.redis_db,
-                    password=settings.redis_password if settings.redis_password else None,
+                    password=redis_password if redis_password else None,
                     ssl=settings.redis_ssl,
                     encoding="utf-8",
                     decode_responses=False

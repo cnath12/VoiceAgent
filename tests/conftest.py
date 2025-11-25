@@ -7,18 +7,20 @@ from src.core.conversation_state import ConversationStateManager
 
 @pytest.fixture
 def mock_settings():
-    """Mock settings for testing."""
+    """Mock settings for testing with valid format values."""
     from src.config.settings import Settings
 
     settings = Settings(
-        twilio_account_sid="test_account_sid",
-        twilio_auth_token="test_auth_token",
+        # Twilio - must start with AC and be 30+ chars
+        twilio_account_sid="AC" + "a" * 32,
+        twilio_auth_token="a" * 32,  # SecretStr, 30+ chars
         twilio_phone_number="+15555555555",
-        openai_api_key="test_openai_key",
-        deepgram_api_key="test_deepgram_key",
+        # API keys - must be 20+ chars
+        openai_api_key="sk-" + "a" * 48,  # OpenAI format
+        deepgram_api_key="a" * 40,
         app_env="testing",
         smtp_email="test@example.com",
-        smtp_password="test_password"
+        smtp_password="test_password_123456"
     )
     return settings
 

@@ -24,3 +24,12 @@ hiredis>=2.2.0  # Faster Redis protocol parser
 
 # Monitoring & Observability
 prometheus-client>=0.19.0  # Prometheus metrics
+
+# Async Email
+aiosmtplib>=3.0.0  # Non-blocking SMTP
+
+# Rate Limiting
+slowapi>=0.1.9  # API rate limiting
+
+# Resilience
+pybreaker>=1.0.0  # Circuit breaker pattern

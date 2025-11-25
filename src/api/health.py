@@ -23,7 +23,7 @@ async def check_openai_health() -> Dict[str, Any]:
         from openai import AsyncOpenAI
 
         client = AsyncOpenAI(
-            api_key=settings.openai_api_key,
+            api_key=settings.get_openai_api_key(),
             timeout=HealthCheckConfig.DEPENDENCY_CHECK_TIMEOUT_SEC
         )
 
@@ -53,7 +53,7 @@ async def check_deepgram_health() -> Dict[str, Any]:
                 total=HealthCheckConfig.DEPENDENCY_CHECK_TIMEOUT_SEC
             )
         ) as session:
-            headers = {"Authorization": f"Token {settings.deepgram_api_key}"}
+            headers = {"Authorization": f"Token {settings.get_deepgram_api_key()}"}
             async with session.get(
                 "https://api.deepgram.com/v1/projects",
                 headers=headers
@@ -84,7 +84,7 @@ async def check_twilio_health() -> Dict[str, Any]:
 
         client = Client(
             settings.twilio_account_sid,
-            settings.twilio_auth_token
+            settings.get_twilio_auth_token()
         )
 
         # Verify account is accessible
@@ -106,7 +106,7 @@ async def check_twilio_health() -> Dict[str, Any]:
 
 async def check_smtp_health() -> Dict[str, Any]:
     """Check SMTP server connectivity."""
-    if not settings.smtp_email or not settings.smtp_password:
+    if not settings.smtp_email or not settings.get_smtp_password():
         return {
             "status": "skipped",
             "message": "SMTP not configured"
@@ -245,17 +245,23 @@ async def detailed_health_check():
     all_healthy = critical_healthy and optional_healthy
     status_code = 200 if all_healthy else 503
 
+    # Get circuit breaker status
+    from src.utils.circuit_breaker import get_circuit_status
+    circuit_breakers = get_circuit_status()
+
     response = {
         "status": "healthy" if all_healthy else "unhealthy",
         "timestamp": datetime.utcnow().isoformat(),
         "checks": checks,
+        "circuit_breakers": circuit_breakers,
         "summary": {
             "critical_healthy": critical_healthy,
             "optional_healthy": optional_healthy,
             "total_checks": len(checks),
             "healthy_count": sum(1 for c in checks.values() if c.get("status") == "healthy"),
             "unhealthy_count": sum(1 for c in checks.values() if c.get("status") == "unhealthy"),
-            "skipped_count": sum(1 for c in checks.values() if c.get("status") == "skipped")
+            "skipped_count": sum(1 for c in checks.values() if c.get("status") == "skipped"),
+            "circuit_breakers_open": sum(1 for cb in circuit_breakers.values() if cb.get("state") == "open")
         }
     }
 
@@ -274,8 +280,8 @@ async def readiness_probe():
     # Could add more sophisticated checks here
     # For now, just verify critical settings are loaded
     try:
-        assert settings.openai_api_key, "OpenAI API key not configured"
-        assert settings.deepgram_api_key, "Deepgram API key not configured"
+        assert settings.get_openai_api_key(), "OpenAI API key not configured"
+        assert settings.get_deepgram_api_key(), "Deepgram API key not configured"
         assert settings.twilio_account_sid, "Twilio account SID not configured"
 
         return {"status": "ready"}

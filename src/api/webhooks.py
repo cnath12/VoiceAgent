@@ -38,7 +38,7 @@ async def validate_twilio_request(request: Request) -> bool:
     if not is_production():
         return True
     try:
-        validator = RequestValidator(settings.twilio_auth_token)
+        validator = RequestValidator(settings.get_twilio_auth_token())
         # Build expected URL using https and the effective host
         configured_host = settings.public_host.strip()
         header_host = request.headers.get("x-forwarded-host") or request.headers.get("host")

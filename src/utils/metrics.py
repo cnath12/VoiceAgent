@@ -314,6 +314,24 @@ validation_errors = Counter(
 )
 
 # =============================================================================
+# Circuit Breaker Metrics
+# =============================================================================
+
+# Circuit breaker state (1 = open/failing, 0 = closed/healthy)
+circuit_breaker_state = Gauge(
+    'voiceagent_circuit_breaker_state',
+    'Circuit breaker state (1=open, 0=closed)',
+    ['service']  # openai, deepgram, usps, smtp
+)
+
+# Circuit breaker trips (times the breaker opened due to failures)
+circuit_breaker_trips = Counter(
+    'voiceagent_circuit_breaker_trips_total',
+    'Number of times circuit breaker tripped open',
+    ['service']
+)
+
+# =============================================================================
 # Helper Functions
 # =============================================================================
 
@@ -368,3 +386,23 @@ def track_frame_processing(frame_type: str, direction: str, duration: float) -> 
     """
     frames_processed.labels(frame_type=frame_type, direction=direction).inc()
     pipeline_processing_time.labels(frame_type=frame_type).observe(duration)
+
+
+def track_transcription(source: str, is_final: bool, confidence: float = None) -> None:
+    """Track transcription metrics by source.
+
+    This is critical for understanding which STT path (pipecat vs direct)
+    is providing transcriptions in the hybrid STT architecture.
+
+    Args:
+        source: STT source ('pipecat' or 'direct')
+        is_final: Whether this is a final transcription
+        confidence: Optional confidence score (0.0-1.0)
+    """
+    transcriptions.labels(
+        source=source,
+        is_final=str(is_final).lower()
+    ).inc()
+
+    if confidence is not None:
+        transcription_confidence.observe(confidence)

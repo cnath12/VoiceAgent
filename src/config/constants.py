@@ -148,6 +148,31 @@ class APITimeouts:
     HTTP_TOTAL_TIMEOUT_SEC = 30
     """Total timeout for HTTP requests"""
 
+    # Default timeout for HTTP requests
+    DEFAULT_TIMEOUT_SEC = 30
+    """Default timeout for HTTP requests via shared session"""
+
+
+# ============================================================================
+# CIRCUIT BREAKER CONFIGURATION
+# ============================================================================
+
+class CircuitBreakerConfig:
+    """Circuit breaker configuration for external services.
+
+    Circuit breakers prevent cascading failures when external services are down.
+    After FAIL_MAX consecutive failures, the circuit opens and fails fast for
+    RESET_TIMEOUT_SEC seconds before allowing a test request through.
+    """
+
+    # Failure threshold
+    FAIL_MAX = 5
+    """Number of failures before opening the circuit"""
+
+    # Reset timeout
+    RESET_TIMEOUT_SEC = 60
+    """Seconds to wait before trying again after circuit opens"""
+
 
 # ============================================================================
 # WEBSOCKET CONFIGURATION

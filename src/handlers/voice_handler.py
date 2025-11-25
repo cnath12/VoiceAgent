@@ -1,4 +1,5 @@
 """Main voice conversation handler."""
+import asyncio
 from typing import AsyncGenerator, Optional
 
 from pipecat.frames.frames import (
@@ -18,6 +19,7 @@ from src.handlers.demographics_handler import DemographicsHandler
 from src.handlers.scheduling_handler import SchedulingHandler
 from src.utils.logger import get_logger
 from src.utils.structured_logging import log_transcription
+from src.utils.metrics import track_transcription
 
 logger = get_logger(__name__)
 
@@ -197,11 +199,21 @@ class VoiceHandler(FrameProcessor):
             logger.info(f"User stopped speaking in {self.call_sid}")
         
         # Handle transcription frames from Deepgram STT
-        # Some STT implementations may deliver transcriptions in either direction.
-        # Process final transcriptions regardless of direction to avoid missing user speech.
+        # HYBRID STT ARCHITECTURE:
+        # TranscriptionFrames can come from two sources:
+        # 1. Pipecat's DeepgramSTTService (via pipeline)
+        # 2. Direct Deepgram connection (injected via forward_transcription_to_pipeline)
+        # We track metrics to understand which path is providing transcriptions.
         elif isinstance(frame, TranscriptionFrame):
             confidence = getattr(frame, 'confidence', None)
-            logger.debug(f"Received TranscriptionFrame with confidence={confidence} for {self.call_sid}")
+
+            # Determine source: if user_id matches call_sid, it's from direct path
+            # (Direct path sets user_id=call_sid, Pipecat doesn't set it or uses different value)
+            source = 'direct' if getattr(frame, 'user_id', None) == self.call_sid else 'pipecat'
+            logger.debug(f"[{source.upper()} STT] TranscriptionFrame confidence={confidence} for {self.call_sid}")
+
+            # Track metric for observability
+            track_transcription(source=source, is_final=True, confidence=confidence)
 
             # Ignore user input while the bot is speaking to prevent talk-over capture
             if self._bot_speaking:
@@ -210,7 +222,7 @@ class VoiceHandler(FrameProcessor):
 
             if frame.text and frame.text.strip():
                 log_transcription(logger, frame.text, self.call_sid, is_final=True, confidence=confidence)
-                logger.info(f"Processing transcription for {self.call_sid}")
+                logger.info(f"[{source.upper()} STT] Processing transcription for {self.call_sid}")
                 import asyncio as _asyncio
                 import time as _time
                 t_start = _time.time()
@@ -351,9 +363,11 @@ class VoiceHandler(FrameProcessor):
                 logger.debug(f"Successfully yielded TextFrame(s) for TTS conversion for {self.call_sid}")
                 logger.info(f"Successfully sent response for {self.call_sid}")
 
+            except (RuntimeError, asyncio.CancelledError) as e:
+                # Pipeline or task cancelled - don't retry
+                logger.warning(f"Pipeline cancelled while sending response for {self.call_sid}: {e}")
             except Exception as e:
-                logger.error(f"Failed to yield TextFrame for {self.call_sid}: {e}")
-                logger.error(f"Failed to send response for {self.call_sid}: {e}")
+                logger.error(f"Failed to send response for {self.call_sid}: {e}", exc_info=True)
                 # Note: Don't yield fallback frames as they might cause the same error
     
     async def _route_to_handler(self, state: ConversationState, user_input: str) -> str:

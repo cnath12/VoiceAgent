@@ -11,7 +11,7 @@ from deepgram import LiveOptions
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
-from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport
+from pipecat.transports.network.fastapi_websocket import FastAPIWebsocketTransport
 
 from src.config.settings import get_settings
 from src.core.conversation_state import state_manager
@@ -125,14 +125,15 @@ async def _create_deepgram_stt(call_sid: str) -> DeepgramSTTService:
             channels=1,
         )
 
+        deepgram_key = settings.get_deepgram_api_key()
         stt_service = DeepgramSTTService(
-            api_key=settings.deepgram_api_key,
+            api_key=deepgram_key,
             sample_rate=8000,  # Match Twilio's sample rate
             live_options=live_options,
         )
 
         # Test Deepgram credentials immediately
-        if not settings.deepgram_api_key or len(settings.deepgram_api_key) < 10:
+        if not deepgram_key or len(deepgram_key) < 10:
             logger.warning(f"Deepgram API key appears invalid for call {call_sid}")
         else:
             logger.info(f"Deepgram API key format looks valid for call {call_sid}")
@@ -181,8 +182,9 @@ async def _create_deepgram_tts(call_sid: str) -> DeepgramTTSService:
         deepgram_logger.setLevel(logging.DEBUG)
 
         # Test Deepgram API key immediately
+        deepgram_key = settings.get_deepgram_api_key()
         logger.debug(f"Validating Deepgram TTS API key for call {call_sid}")
-        if not settings.deepgram_api_key or len(settings.deepgram_api_key) < 20:
+        if not deepgram_key or len(deepgram_key) < 20:
             logger.warning(f"Deepgram API key appears invalid for call {call_sid}")
         else:
             logger.info(f"Deepgram TTS API key format looks valid for call {call_sid}")
@@ -209,7 +211,7 @@ async def _create_deepgram_tts(call_sid: str) -> DeepgramTTSService:
 
         tts_service = DeepgramTTSService(
             aiohttp_session=tts_session,
-            api_key=settings.deepgram_api_key,
+            api_key=deepgram_key,
             voice="aura-asteria-en",
             sample_rate=8000,
             encoding="linear16",

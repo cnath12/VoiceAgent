@@ -2,6 +2,40 @@
 
 This module handles real-time audio streaming from Twilio via WebSocket,
 processes audio through the voice agent pipeline, and returns synthesized responses.
+
+HYBRID STT ARCHITECTURE
+=======================
+
+This module implements a "hybrid" speech-to-text architecture that uses
+TWO parallel Deepgram connections:
+
+1. PIPECAT STT (via pipeline/factory.py):
+   - DeepgramSTTService is part of the Pipecat pipeline
+   - Audio flows: transport.input() → DeepgramSTTService → VoiceHandler → TTS → output()
+   - This is the "proper" way to handle STT in Pipecat
+
+2. DIRECT DEEPGRAM (hybrid workaround):
+   - A separate DeepgramClient WebSocket connection
+   - Audio is manually forwarded from Twilio WebSocket to Deepgram
+   - Transcriptions are injected into the pipeline via TranscriptionFrame
+   - This was added to fix reliability issues with Pipecat's built-in STT
+
+WHY THIS EXISTS:
+During development, Pipecat's DeepgramSTTService exhibited reliability issues
+(missing transcriptions, connection drops). The direct Deepgram connection
+provides a fallback that has proven more reliable.
+
+CONFIGURATION:
+- Set ENABLE_DIRECT_STT=false to disable the hybrid approach
+- Monitor metrics: voiceagent_transcriptions_total{source="direct|pipecat"}
+  to see which path is providing transcriptions
+
+FUTURE:
+Once Pipecat's STT reliability is confirmed, set ENABLE_DIRECT_STT=false
+and rely solely on the pipeline approach. This will reduce:
+- API costs (only one Deepgram connection per call)
+- Code complexity
+- Potential for duplicate transcriptions
 """
 import asyncio
 import json
@@ -14,7 +48,7 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
 from pipecat.frames.frames import StartFrame, EndFrame, TranscriptionFrame
 from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
-from pipecat.transports.websocket.fastapi import (
+from pipecat.transports.network.fastapi_websocket import (
     FastAPIWebsocketTransport,
     FastAPIWebsocketParams,
 )
@@ -30,13 +64,11 @@ from src.utils.metrics import (
     total_calls,
     call_duration,
     websocket_errors,
+    track_transcription,
 )
 
 logger = get_logger(__name__)
 settings = get_settings()
-
-# Global pipeline runner
-runner = None
 
 
 async def handle_media_stream(websocket: WebSocket, call_sid: str):
@@ -53,6 +85,9 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
     active_calls.inc()
     call_start_time = time.time()
     call_status = "error"  # Will be updated on successful completion
+
+    # Initialize runner to None to avoid NameError in finally block
+    runner = None
 
     try:
         logger.debug(f"WebSocket connection attempt for call_sid: {call_sid}")
@@ -86,9 +121,12 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
                         logger.debug(f"MEDIA FRAME #{media_frame_count}: payload_len={len(payload_data)} bytes for call {call_sid}")
                         logger.debug(f"Media frame {media_frame_count} for {call_sid}: {len(payload_data)} bytes")
 
-                except Exception as parse_error:
+                except json.JSONDecodeError:
                     # Not JSON we care about; continue
-                    logger.debug(f"Non-JSON message: {parse_error}")
+                    logger.debug(f"Non-JSON WebSocket message received for call {call_sid}")
+                    continue
+                except KeyError as ke:
+                    logger.debug(f"Missing expected key in message: {ke} for call {call_sid}")
                     continue
 
                 if event_type == "start" or ("start" in payload and isinstance(payload["start"], dict)):
@@ -100,16 +138,17 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
                     if call_sid_ws:
                         call_sid = call_sid_ws
                     break
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout while waiting for initial WS messages for call {call_sid}")
         except Exception as e:
-            logger.warning(f"Error while parsing initial WS messages: {e}")
-            logger.warning(f"WS initial parse error for call {call_sid}: {e}")
+            logger.warning(f"Error while parsing initial WS messages for call {call_sid}: {e}", exc_info=True)
 
         logger.debug(f"DEBUG: Deepgram model={settings.deepgram_model}, endpointing={settings.deepgram_endpointing_ms}ms for call {call_sid}")
         serializer = TwilioFrameSerializer(
             stream_sid=stream_sid,
             call_sid=call_sid,
             account_sid=settings.twilio_account_sid,
-            auth_token=settings.twilio_auth_token,
+            auth_token=settings.get_twilio_auth_token(),
         )
         if not stream_sid:
             logger.warning(f"No stream_sid extracted for {call_sid}. Downstream audio may fail.")
@@ -120,41 +159,63 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
         vad_analyzer = None
         logger.info("VAD disabled; relying on Deepgram endpointing")
 
-        # HYBRID FIX: Add direct Deepgram STT connection (bypassing Pipecat STT issues)
-        logger.debug(f"Setting up DIRECT Deepgram STT connection (bypassing Pipecat) for call {call_sid}")
-        direct_deepgram_client = DeepgramClient(settings.deepgram_api_key)
-        direct_dg_connection = direct_deepgram_client.listen.asyncwebsocket.v("1")
+        # =========================================================================
+        # HYBRID STT ARCHITECTURE
+        # =========================================================================
+        # This creates a DIRECT Deepgram WebSocket connection in parallel with
+        # Pipecat's built-in STT. This was added as a workaround for reliability
+        # issues. Audio is forwarded to this direct connection, and transcriptions
+        # are injected back into the pipeline via TranscriptionFrame.
+        #
+        # Set ENABLE_DIRECT_STT=false to disable and rely solely on Pipecat's STT.
+        # Monitor metrics: voiceagent_transcriptions_total{source="direct|pipecat"}
+        # =========================================================================
+        direct_dg_connection = None
+        direct_deepgram_client = None
 
-        # Direct Deepgram options (from working fixed_tts_agent.py)
-        direct_live_options = LiveOptions(
-            model=settings.deepgram_model,
-            encoding="mulaw",  # Twilio audio format
-            sample_rate=8000,
-            channels=1,
-            interim_results=True,
-            endpointing=settings.deepgram_endpointing_ms,
-            smart_format=True
-        )
+        if settings.enable_direct_stt:
+            logger.info(f"[HYBRID STT] Setting up DIRECT Deepgram connection for call {call_sid}")
+            direct_deepgram_client = DeepgramClient(settings.get_deepgram_api_key())
+            direct_dg_connection = direct_deepgram_client.listen.asyncwebsocket.v("1")
+        else:
+            logger.info(f"[HYBRID STT] Direct STT DISABLED - using Pipecat STT only for call {call_sid}")
 
-        logger.info(f"Direct Deepgram STT connection ready for call {call_sid}")
+        # Direct Deepgram options (only used when enable_direct_stt=True)
+        direct_live_options = None
+        if settings.enable_direct_stt:
+            direct_live_options = LiveOptions(
+                model=settings.deepgram_model,
+                encoding="mulaw",  # Twilio audio format
+                sample_rate=8000,
+                channels=1,
+                interim_results=True,
+                endpointing=settings.deepgram_endpointing_ms,
+                smart_format=True
+            )
+            logger.info(f"[HYBRID STT] Direct Deepgram STT connection ready for call {call_sid}")
         last_audio_time = time.time()
 
-        # Direct Deepgram event handlers (from working fixed_tts_agent.py)
+        # Direct Deepgram event handlers (HYBRID STT - direct path)
+        # This provides transcriptions when Pipecat's built-in STT has issues
         async def on_deepgram_message(self, result, **kwargs):
             nonlocal last_audio_time
             last_audio_time = time.time()
 
             if result.channel.alternatives[0].transcript:
                 sentence = result.channel.alternatives[0].transcript.strip()
+                confidence = getattr(result.channel.alternatives[0], 'confidence', None)
 
                 if result.is_final:
                     if sentence:
-                        logger.info(f"Direct Deepgram final transcription: '{sentence}' for {call_sid}")
-                        # TODO: Forward to VoiceHandler via TextFrame injection
+                        # Track metric: transcription from DIRECT Deepgram path
+                        track_transcription(source='direct', is_final=True, confidence=confidence)
+                        logger.info(f"[DIRECT STT] Final transcription: '{sentence}' for {call_sid}")
                         await forward_transcription_to_pipeline(sentence)
                 else:
                     if sentence:
-                        logger.debug(f"Direct Deepgram interim transcription: '{sentence}' for call {call_sid}")
+                        # Track interim transcription
+                        track_transcription(source='direct', is_final=False, confidence=confidence)
+                        logger.debug(f"[DIRECT STT] Interim: '{sentence}' for call {call_sid}")
 
         async def on_deepgram_error(self, error, **kwargs):
             logger.error(f"Direct Deepgram error for {call_sid}: {error}")
@@ -219,9 +280,10 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
         task = PipelineTask(pipeline)
         logger.info(f"Pipeline task created for call {call_sid}")
 
-        # HYBRID FIX: Set pipeline_task reference for transcription forwarding
+        # Set pipeline_task reference for direct Deepgram transcription forwarding
         pipeline_task = task
-        logger.debug(f"Pipeline task reference set for direct Deepgram forwarding for call {call_sid}")
+        if settings.enable_direct_stt:
+            logger.debug(f"[HYBRID STT] Pipeline task reference set for transcription injection for call {call_sid}")
 
         # CRITICAL: Send StartFrame to initialize all processors BEFORE starting runner
         logger.debug(f"Sending StartFrame to initialize pipeline for call {call_sid}")
@@ -229,40 +291,43 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
         # Remove extra warm-up frames to reduce initial latency
         logger.debug(f"StartFrame queued for call {call_sid}")
 
-        # HYBRID FIX: Start direct Deepgram connection (from fixed_tts_agent.py)
-        logger.debug(f"Starting DIRECT Deepgram STT connection for call {call_sid}")
-        direct_dg_connection.on(LiveTranscriptionEvents.Transcript, on_deepgram_message)
-        direct_dg_connection.on(LiveTranscriptionEvents.Error, on_deepgram_error)
-        await direct_dg_connection.start(direct_live_options)
-        logger.info(f"Direct Deepgram STT connection started for call {call_sid}")
+        # Start direct Deepgram connection if enabled
+        keepalive_task = None
+        if settings.enable_direct_stt and direct_dg_connection:
+            logger.debug(f"[HYBRID STT] Starting DIRECT Deepgram STT connection for call {call_sid}")
+            direct_dg_connection.on(LiveTranscriptionEvents.Transcript, on_deepgram_message)
+            direct_dg_connection.on(LiveTranscriptionEvents.Error, on_deepgram_error)
+            await direct_dg_connection.start(direct_live_options)
+            logger.info(f"[HYBRID STT] Direct Deepgram STT connection started for call {call_sid}")
 
-        # Aggressive keepalive task (from fixed_tts_agent.py)
-        async def send_keepalive():
-            nonlocal last_audio_time
-            try:
-                await asyncio.sleep(0.5)  # Brief delay to let connection settle
-                await direct_dg_connection.keep_alive()
-                logger.debug(f"Initial Deepgram KeepAlive sent for call {call_sid}")
-            except Exception as e:
-                logger.error(f"Initial KeepAlive error for call {call_sid}: {e}")
-
-            while True:
+            # Aggressive keepalive task for direct Deepgram connection
+            async def send_keepalive():
+                nonlocal last_audio_time
                 try:
-                    current_time = time.time()
-                    if current_time - last_audio_time > 2:
-                        logger.debug(f"Sending Deepgram KeepAlive for call {call_sid} (last audio: {current_time - last_audio_time:.1f}s ago)")
-                        await direct_dg_connection.keep_alive()
-                    await asyncio.sleep(0.2)  # Check every 2 seconds
+                    await asyncio.sleep(0.5)  # Brief delay to let connection settle
+                    await direct_dg_connection.keep_alive()
+                    logger.debug(f"[HYBRID STT] Initial KeepAlive sent for call {call_sid}")
                 except Exception as e:
-                    logger.error(f"KeepAlive error for call {call_sid}: {e}")
-                    break
+                    logger.error(f"[HYBRID STT] Initial KeepAlive error for call {call_sid}: {e}")
 
-        keepalive_task = asyncio.create_task(send_keepalive())
-        logger.debug(f"Deepgram keepalive task started for call {call_sid}")
+                while True:
+                    try:
+                        current_time = time.time()
+                        if current_time - last_audio_time > 2:
+                            logger.debug(f"[HYBRID STT] KeepAlive for call {call_sid} (last audio: {current_time - last_audio_time:.1f}s ago)")
+                            await direct_dg_connection.keep_alive()
+                        await asyncio.sleep(0.2)  # Check every 200ms
+                    except Exception as e:
+                        logger.error(f"[HYBRID STT] KeepAlive error for call {call_sid}: {e}")
+                        break
+
+            keepalive_task = asyncio.create_task(send_keepalive())
+            logger.debug(f"[HYBRID STT] Keepalive task started for call {call_sid}")
 
         # Remove greeting scheduling here; VoiceHandler will produce the greeting
 
-        global runner
+        # Create pipeline runner as LOCAL variable (not global)
+        # Shutdown tracking is handled via register_runner/unregister_runner
         runner = PipelineRunner()
         register_runner(runner)  # Register for graceful shutdown tracking
         logger.info(f"Starting pipeline runner for call {call_sid}")
@@ -270,8 +335,12 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
         # Let FastAPIWebsocketTransport consume all remaining messages
         logger.debug(f"Ready to start pipeline runner - FastAPIWebsocketTransport will handle all remaining messages for call {call_sid}")
 
-        # HYBRID FIX: Enhanced WebSocket monitoring with direct Deepgram audio forwarding
-        logger.debug(f"Adding WebSocket message monitoring + audio forwarding for {call_sid}")
+        # WebSocket message monitoring with optional direct Deepgram audio forwarding
+        if settings.enable_direct_stt:
+            logger.debug(f"[HYBRID STT] Adding WebSocket audio forwarding for {call_sid}")
+        else:
+            logger.debug(f"WebSocket monitoring enabled for {call_sid}")
+
         original_receive_text = websocket.receive_text
         async def debug_receive_text():
             nonlocal last_audio_time
@@ -284,18 +353,21 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
                         media_data = payload.get("media", {})
                         payload_data = media_data.get("payload", "")
 
-                        # CRITICAL: Forward audio to direct Deepgram (from fixed_tts_agent.py)
-                        if payload_data:
+                        # Forward audio to direct Deepgram ONLY if enabled
+                        if settings.enable_direct_stt and direct_dg_connection and payload_data:
                             try:
                                 audio_chunk = base64.b64decode(payload_data)
                                 await direct_dg_connection.send(audio_chunk)
                                 last_audio_time = time.time()  # Update for keepalive
                             except Exception as e:
-                                logger.error(f"Failed to forward audio to direct Deepgram for call {call_sid}: {e}")
+                                logger.error(f"[HYBRID STT] Failed to forward audio for call {call_sid}: {e}")
 
-                        # Reduced logging - only log every 100th frame to avoid spam
-                        if int(media_data.get('timestamp', 0)) % 2000 == 0:  # Every 2 seconds
-                            logger.debug(f"AUDIO FLOWING: payload_len={len(payload_data)} bytes, timestamp={media_data.get('timestamp', 'N/A')} -> Deepgram for call {call_sid}")
+                        # Reduced logging - only log every 2 seconds to avoid spam
+                        if int(media_data.get('timestamp', 0)) % 2000 == 0:
+                            if settings.enable_direct_stt:
+                                logger.debug(f"[HYBRID STT] AUDIO: {len(payload_data)} bytes -> Deepgram for call {call_sid}")
+                            else:
+                                logger.debug(f"AUDIO: {len(payload_data)} bytes for call {call_sid}")
                     elif event_type == "start":
                         start = payload.get("start", {})
                         fmt = start.get("mediaFormat", {})
@@ -339,20 +411,22 @@ async def handle_media_stream(websocket: WebSocket, call_sid: str):
             except Exception as e:
                 logger.error(f"Error sending EndFrame for {call_sid}: {e}")
 
-            # HYBRID FIX: Cleanup direct Deepgram connection and keepalive
-            logger.debug(f"Cleaning up direct Deepgram connection for {call_sid}")
-            try:
-                if 'keepalive_task' in locals():
-                    keepalive_task.cancel()
-                    logger.debug(f"Keepalive task cancelled for call {call_sid}")
-            except Exception as e:
-                logger.warning(f"Keepalive cleanup error for call {call_sid}: {e}")
+            # Cleanup direct Deepgram connection and keepalive (if enabled)
+            if settings.enable_direct_stt:
+                logger.debug(f"[HYBRID STT] Cleaning up direct Deepgram connection for {call_sid}")
+                try:
+                    if keepalive_task:
+                        keepalive_task.cancel()
+                        logger.debug(f"[HYBRID STT] Keepalive task cancelled for call {call_sid}")
+                except Exception as e:
+                    logger.warning(f"[HYBRID STT] Keepalive cleanup error for call {call_sid}: {e}")
 
-            try:
-                await direct_dg_connection.finish()
-                logger.debug(f"Direct Deepgram connection closed for {call_sid}")
-            except Exception as e:
-                logger.warning(f"Deepgram cleanup error for call {call_sid}: {e}")
+                try:
+                    if direct_dg_connection:
+                        await direct_dg_connection.finish()
+                        logger.debug(f"[HYBRID STT] Direct Deepgram connection closed for {call_sid}")
+                except Exception as e:
+                    logger.warning(f"[HYBRID STT] Deepgram cleanup error for call {call_sid}: {e}")
 
             # Unregister runner from shutdown tracking
             if runner:

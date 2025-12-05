@@ -214,7 +214,8 @@ async def _create_deepgram_tts(call_sid: str) -> DeepgramTTSService:
             api_key=deepgram_key,
             voice="aura-asteria-en",
             sample_rate=8000,
-            encoding="mulaw",  # Match Twilio's expected format
+            encoding="linear16",  # TwilioFrameSerializer converts to mulaw
+            container="none",     # Raw PCM audio
         )
 
         logger.info(f"TTS service with anti-cache session created for call {call_sid}")
@@ -267,7 +268,7 @@ async def _create_deepgram_tts(call_sid: str) -> DeepgramTTSService:
         await asyncio.sleep(0.5)  # Reduce startup delay for faster greeting
 
         logger.info(f"DeepgramTTSService created and initialized for call {call_sid}")
-        logger.info(f"TTS Configuration for call {call_sid}: aura-asteria-en voice, 8kHz mulaw (Twilio native format)")
+        logger.info(f"TTS Configuration for call {call_sid}: aura-asteria-en voice, 8kHz linear16 (TwilioFrameSerializer converts to mulaw)")
         logger.debug(f"Deepgram TTS debug logging ENABLED for call {call_sid}")
 
         return tts_service

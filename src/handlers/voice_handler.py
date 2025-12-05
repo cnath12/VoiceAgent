@@ -122,8 +122,9 @@ class VoiceHandler(FrameProcessor):
                 logger.info(f"Sending continuous greeting + immediate insurance prompt for {self.call_sid}")
 
                 # Send complete greeting as ONE TextFrame to avoid TTS truncation issues
+                # NOTE: Avoid "!" mid-sentence as Pipecat splits at sentence boundaries
                 full_greeting = (
-                    "Hello! Welcome to our AI appointment scheduling service. "
+                    "Hello, welcome to our AI appointment scheduling service, "
                     "I'm here to help you schedule your appointment today. "
                     "To get started, could you please tell me your insurance provider name and your member ID number?"
                 )

@@ -121,28 +121,18 @@ class VoiceHandler(FrameProcessor):
                 # DEEPGRAM TTS FIX: Send greeting immediately since DeepgramTTS doesn't send TTSStartedFrame
                 logger.info(f"Sending continuous greeting + immediate insurance prompt for {self.call_sid}")
 
-                # Greeting only (no question); ask insurance immediately after
-                part1 = "Hello! Welcome to our AI appointment scheduling service."
-                part2 = "I'm here to help you schedule your appointment today."
-                insurance_prompt = PHASE_PROMPTS.get(
-                    "insurance",
+                # Send complete greeting as ONE TextFrame to avoid TTS truncation issues
+                full_greeting = (
+                    "Hello! Welcome to our AI appointment scheduling service. "
+                    "I'm here to help you schedule your appointment today. "
                     "To get started, could you please tell me your insurance provider name and your member ID number?"
                 )
-
-                greeting = f"{part1} {part2}"
-                logger.debug(f"Sending greeting (length: {len(greeting)} chars) for {self.call_sid}")
-                logger.debug(f"Greeting text: '{greeting}' for {self.call_sid}")
+                
+                logger.debug(f"Sending greeting (length: {len(full_greeting)} chars) for {self.call_sid}")
                 logger.info(f"Sending initial greeting to {self.call_sid}")
 
-                # Create TextFrame with explicit handling
-                # Send greeting as two back-to-back TextFrames to avoid TTS truncation after 'Hello!'
-                greeting_frame1 = TextFrame(text=part1)
-                greeting_frame2 = TextFrame(text=part2)
-                logger.debug(f"Created greeting TextFrames for {self.call_sid}")
-                await self.push_frame(greeting_frame1, FrameDirection.DOWNSTREAM)
-                await self.push_frame(greeting_frame2, FrameDirection.DOWNSTREAM)
-                # Immediately ask for insurance as a separate statement
-                await self.push_frame(TextFrame(text=insurance_prompt), FrameDirection.DOWNSTREAM)
+                # Send as ONE TextFrame to prevent TTS connection issues
+                await self.push_frame(TextFrame(text=full_greeting), FrameDirection.DOWNSTREAM)
                 # Ensure phase is INSURANCE right away
                 await state_manager.transition_phase(self.call_sid, ConversationPhase.INSURANCE)
                 self._tts_warmed_up = True
